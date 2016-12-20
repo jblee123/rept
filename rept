@@ -1,0 +1,165 @@
+#!/usr/bin/env python
+
+import collections
+import os.path
+import subprocess
+import sys
+
+Dependency = collections.namedtuple('Dependency',
+    'name path remote remote_server revision')
+
+def get_dependency_data():
+    abs_cur_path = os.getcwd()
+    file = None
+    while (file == None) and (abs_cur_path != os.path.sep):
+        try:
+            file = open(os.path.join(abs_cur_path, '.rept_deps'))
+            os.chdir(abs_cur_path)
+        except:
+            abs_cur_path = os.path.dirname(abs_cur_path)
+
+    err = None
+    contents = None
+    if file != None:
+        contents = file.read()
+        file.close()
+    else:
+        print('Error: could not find .rept_deps file')
+        return None
+
+    try:
+        contents = eval(contents, {}, {})
+    except:
+        print('Error: could not parse .rept_deps file')
+        return None
+
+    if (type(contents) != dict):
+        print('Error: .rept_deps must contain a single dictionary')
+        return None
+
+    default_remote = 'origin'
+    default_remote_server = ''
+    default_revision = 'origin/master'
+
+    if ('defaults' in contents.keys()):
+        defaults = contents['defaults']
+        if ('remote' in defaults.keys()):
+            default_remote = defaults['remote']
+        if ('remote_server' in defaults.keys()):
+            default_remote_server = defaults['remote_server']
+        if ('revision' in defaults.keys()):
+            default_revision = defaults['revision']
+
+    if ('dependencies' not in contents.keys()):
+        print('Error: .rept_deps does not contain "dependencies" list')
+        return None
+
+    dep_list = contents['dependencies']
+    if (type(dep_list) != list):
+        print('Error: "dependencies" is not a list')
+        return None
+
+    dependencies = []
+
+    idx = 0
+    for dep in dep_list:
+        if (type(dep) != dict):
+            print('Error: dependency {0} is not a dictionary'.format(idx))
+            return None
+
+        if ('name' not in dep.keys()):
+            print('Error: dependency {0} requires a name'.format(idx))
+            return None
+
+        if ('path' not in dep.keys()):
+            print('Error: dependency {0} requires a path'.format(idx))
+            return None
+
+        name = dep['name']
+        path = dep['path']
+        remote = default_remote
+        remote_server = default_remote_server
+        revision = default_revision
+
+        if ('remote' in dep.keys()):
+            remote = dep['remote']
+
+        if ('remote_server' in dep.keys()):
+            remote_server = dep['remote_server']
+
+        if ('revision' in dep.keys()):
+            revision = dep['revision']
+
+        if (remote_server == ''):
+            print('Error: dependency {0} requires a remote_server'.format(idx))
+            return None
+
+        dependencies.append(
+            Dependency(name, path, remote, remote_server, revision))
+
+        idx += 1
+
+    return dependencies
+
+def sync(dependencies):
+    err_list = []
+    start_dir = os.getcwd()
+
+    # make sure we *can* clone
+    for dep in dependencies:
+        print('syncing ' + dep.name + '...')
+        os.chdir(start_dir)
+        if (os.path.isfile(dep.path)):
+            err_list.append(
+                'cannot sync "{0}": '
+                'a file with the same name exists'.format(dep.path))
+            continue
+
+        if (not os.path.exists(dep.path)):
+            os.makedirs(dep.path)
+
+        os.chdir(dep.path)
+
+        if (os.path.isfile('.git')):
+            err_list.append(
+                'cannot sync "{0}": '
+                'a ".git" file exists in the directory'.format(dep.path))
+            continue
+
+        # Already a .git dir? Do a fetch.
+        if (os.path.isdir('.git')):
+            ret = subprocess.call(['git', 'fetch', dep.remote])
+            if (ret):
+                err_list.append(
+                    'cannot sync "{0}": '
+                    'fetch failed'.format(dep.path))
+        else:
+            # No .git dir. Do a clone.
+            full_remote_repo_name = dep.remote_server + dep.name
+            cmd = 'git clone -o ' + dep.remote + ' ' + full_remote_repo_name + ' .'
+            ret = subprocess.call(
+                ['git', 'clone', '-o', dep.remote, full_remote_repo_name, '.'])
+            if (ret):
+                err_list.append(
+                    'cannot sync "{0}": '
+                    'fetch failed'.format(dep.path))
+            continue
+
+    if (err_list):
+        for err in err_list:
+            print('Error: ' + err)
+
+    os.chdir(start_dir)
+
+def main(argv):
+    dependencies = get_dependency_data()
+    if (dependencies == None):
+        return
+
+    #print(str(dependencies))
+
+    if (argv[0] == 'sync'):
+        sync(dependencies)
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
