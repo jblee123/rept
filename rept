@@ -238,38 +238,20 @@ def check_dep_consistency(dependencies):
 
 def fetch(dependencies):
     err_list = []
-    start_dir = os.getcwd()
 
-    # make sure we *can* clone
     for dep in dependencies:
         print('fetching ' + dep.name + '...')
-        os.chdir(start_dir)
-
-        if not os.path.exists(dep.path):
-            err_list.append(
-                'cannot fetch "{0}": '
-                'the path does not exist'.format(dep.path))
-            continue
-
-        os.chdir(dep.path)
-
-        # Got a .git dir? Do a fetch.
-        if os.path.isdir('.git'):
-            ret = subprocess.call(['git', 'fetch', dep.remote])
-            if (ret):
+        with DoInExistingDir(dep.path) as ctx:
+            if ctx:
+                ret = subprocess.call(['git', 'fetch', dep.remote])
+                if (ret):
+                    err_list.append(
+                        'cannot fetch "{0}": '
+                        'fetch failed'.format(dep.path))
+            else:
                 err_list.append(
                     'cannot fetch "{0}": '
-                    'fetch failed'.format(dep.path))
-        else:
-            err_list.append(
-                'cannot fetch "{0}": '
-                'no ".git" directory'.format(dep.path))
-
-    if err_list:
-        for err in err_list:
-            print('Error: ' + err)
-
-    os.chdir(start_dir)
+                    'invalid repo'.format(dep.path))
 
 def sync(dependencies):
     err_list = []
