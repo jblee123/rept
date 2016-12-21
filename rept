@@ -10,6 +10,24 @@ Dependency = collections.namedtuple('Dependency',
 TargetDep = collections.namedtuple('TargetDep',
     'dep full_path rev_hash')
 
+class DoInExistingDir(object):
+    def __init__(self, dir):
+        self.old_dir = os.getcwd()
+        self.new_dir = dir
+
+    def __enter__(self):
+        try:
+            os.chdir(self.new_dir)
+            return self
+        except:
+            return None
+
+    def __exit__(self, type, value, traceback):
+        os.chdir(self.old_dir)
+        return isinstance(value, OSError)
+
+################################################################################
+
 def get_rev_hash(rev):
     p = subprocess.Popen(
         ['git', 'rev-parse', rev],
@@ -18,14 +36,17 @@ def get_rev_hash(rev):
     out, err = p.communicate()
     return out.strip() if not err else None
 
-def get_rev_hash_from_repo(rev, repo):
+def get_rev_hash_from_repo(rev, repo_dir):
     rev_hash = None
-    if os.path.isdir(repo):
-        orig_dir = os.getcwd()
-        os.chdir(repo)
-        rev_hash = get_rev_hash(rev)
-        os.chdir(orig_dir)
-    return rev_hash
+    err = ''
+    with DoInExistingDir(repo_dir) as ctx:
+        if ctx:
+            rev_hash = get_rev_hash(rev)
+            if not rev_hash:
+                err = 'could not get revision from the repo'
+        else:
+            err = 'could not enter the repo'
+    return (rev_hash, err)
 
 def find_dep_file(search_up):
     cur_path = os.getcwd()
@@ -123,81 +144,84 @@ def get_dependency_data(rept_deps_file):
 
     return dependencies
 
-def check_subdeps(dep_chain_so_far, repo_name, repo_full_path, targets):
-    new_dep_chain = dep_chain_so_far + (repo_full_path,)
+def gen_bad_revision_err(dep_name, dep_revision, rev_hash_err, dep_chain):
+    err_list = ['Bad revision specified: {0}'.format(dep_revision),
+                'for repo: {0}'.format(dep_name),
+                rev_hash_err]
+    return (err_list, dep_chain)
 
-    if not os.path.isdir(repo_full_path):
-        return (('Missing repo: {0}'.format(dep.name), new_dep_chain),)
-
-    if repo_full_path in dep_chain_so_far:
-        return (('Circular reference detected', new_dep_chain),)
-
-    failures = ()
-    orig_dir = os.getcwd()
-    os.chdir(repo_full_path)
-    rept_deps_file = find_dep_file(False)
-    if not rept_deps_file:
-        os.chdir(orig_dir)
-        return ()
-
-    dependencies = get_dependency_data(rept_deps_file)
-    rept_deps_file.close()
-
-    if dependencies == None:
-        os.chdir(orig_dir)
-        return (('Bad .rept_deps file', new_dep_chain),)
-
+def do_check_subdeps(dep_chain, dependencies, targets):
+    failures = []
     for dep in dependencies:
         cur_repo_path = os.path.abspath(dep.path)
         target_for_dep = targets.get(cur_repo_path)
         if target_for_dep:
-            dep_hash = get_rev_hash_from_repo(dep.revision, cur_repo_path)
+            dep_hash, hash_err = get_rev_hash_from_repo(
+                dep.revision, cur_repo_path)
             if not dep_hash:
-                failures += (
-                    (['Bad revision specified: {0}'.format(dep.revision),
-                      'for repo: {0}'.format(dep.name)],
-                    new_dep_chain),)
+                failures.append(gen_bad_revision_err(
+                    dep.name, dep.revision, hash_err, dep_chain))
             elif dep_hash != target_for_dep.rev_hash:
-                failures += (
+                failures.append(
                     (['Inconsistent dependency for {0}:'.format(dep.name),
                       'specified: {0} ({1})'.format(dep.revision, dep_hash),
                       'required: {0} ({1})'.format(
                         target_for_dep.dep.revision, target_for_dep.rev_hash)],
-                    new_dep_chain),)
+                     dep_chain))
         else:
-            failures += check_subdeps(
-                new_dep_chain, dep.name, cur_repo_path, targets)
+            failures.extend(
+                check_subdeps(dep_chain, dep.name, cur_repo_path, targets))
 
-    os.chdir(orig_dir)
     return failures
+
+def check_subdeps(dep_chain, repo_name, repo_full_path, targets):
+    new_dep_chain = dep_chain + [repo_full_path]
+
+    if repo_full_path in dep_chain:
+        return [('Circular reference detected', new_dep_chain)]
+
+    with DoInExistingDir(repo_full_path) as ctx:
+        if ctx:
+            rept_deps_file = find_dep_file(False)
+
+            # no .rept_deps file? No prob. Just means no conflicts.
+            if not rept_deps_file:
+                return []
+
+            try:
+                dependencies = get_dependency_data(rept_deps_file)
+                if dependencies == None: # test for None since [] is allowed
+                    return [('Bad .rept_deps file', new_dep_chain)]
+                return do_check_subdeps(new_dep_chain, dependencies, targets)
+            finally:
+                rept_deps_file.close()
+        else:
+            return [('Missing repo: {0}'.format(repo_name), new_dep_chain)]
 
 def check_dep_consistency(dependencies):
     start_dir = os.getcwd()
 
-    failures = ()
-    dep_chain_so_far = (start_dir,)
+    failures = []
+    dep_chain_so_far = [start_dir]
 
     target_list = []
     target_dict = {}
     for dep in dependencies:
-        full_path = os.path.abspath(dep.path)
-        if os.path.isdir(full_path):
-            target_rev_hash = get_rev_hash_from_repo(dep.revision, full_path)
-            if target_rev_hash:
-                target_dep = TargetDep(dep, full_path, target_rev_hash)
-                target_list.append(target_dep)
-                target_dict[full_path] = target_dep
-            else:
-                failures += (
-                    ('Bad revision for {0}: {1}'.format(dep.name, dep.revision),
-                    dep_chain_so_far),)
+        repo_path = os.path.abspath(dep.path)
+        target_rev_hash, hash_err = get_rev_hash_from_repo(
+            dep.revision, repo_path)
+        if target_rev_hash:
+            target_dep = TargetDep(dep, repo_path, target_rev_hash)
+            target_list.append(target_dep)
+            target_dict[repo_path] = target_dep
         else:
-            failures += (
-                ('Missing repo: {0}'.format(dep.name), dep_chain_so_far),)
+            failures.append(gen_bad_revision_err(
+                dep.name, dep.revision, hash_err, dep_chain_so_far))
 
     for target in target_list:
-        failures += check_subdeps(
-            dep_chain_so_far, dep.name, target.full_path, target_dict)
+        failures.extend(
+            check_subdeps(dep_chain_so_far, dep.name, target.full_path,
+                target_dict))
 
     if failures:
         for failure in failures:
@@ -296,23 +320,7 @@ def sync(dependencies):
 
     os.chdir(start_dir)
 
-def main(argv):
-
-    if len(argv) == 0:
-        pass
-
-    dependencies = None
-
-    rept_deps_file = find_dep_file(True)
-    if rept_deps_file:
-        dependencies = get_dependency_data(rept_deps_file)
-        rept_deps_file.close()
-    else:
-        print('Error: could not find .rept_deps file')
-
-    if not dependencies:
-        return
-
+def exec_cmd(argv, dependencies):
     if argv[0] == 'sync':
         sync(dependencies)
     elif argv[0] == 'fetch':
@@ -321,6 +329,25 @@ def main(argv):
         check_dep_consistency(dependencies)
     else:
         print('unknown command: {0}'.format(argv[0]))
+
+def main(argv):
+    if len(argv) == 0:
+        return
+
+    # Get the dependency file. If we're able to open it, keep it open to lock
+    # both it and the directory in which it resides for the duration of
+    # execution.
+    rept_deps_file = find_dep_file(True)
+    if not rept_deps_file:
+        print('Error: could not find .rept_deps file')
+        return
+
+    try:
+        dependencies = get_dependency_data(rept_deps_file)
+        if dependencies:
+            exec_cmd(argv, dependencies)
+    finally:
+        rept_deps_file.close()
 
 if __name__ == "__main__":
     main(sys.argv[1:])
