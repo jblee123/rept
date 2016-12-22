@@ -49,6 +49,13 @@ def get_rev_hash_from_repo(rev, repo_dir):
             err = 'could not enter the repo'
     return (rev_hash, err)
 
+# def get_branch_exists(branch_name):
+#     p = subprocess.Popen(
+#         ['git', 'rev-parse', '--verify', branch_name],
+#         stdout=subprocess.PIPE,
+#         stderr=subprocess.PIPE)
+#     return p.wait() == 0
+
 def find_dep_file(search_up):
     cur_path = os.getcwd()
     file = None
@@ -237,6 +244,8 @@ def check_dep_consistency(dependencies):
             for dep in reversed(dep_chain[:-1]):
                 print('    included by: ' + dep)
 
+    return failures
+
 def fetch(dependencies):
     err_list = []
 
@@ -258,7 +267,7 @@ def sync(dependencies):
     err_list = []
 
     for dep in dependencies:
-        print('syncing ' + dep.name + '...')
+        print('updating repo {0}...'.format(dep.name))
 
         repo_path = os.path.abspath(dep.path)
 
@@ -287,6 +296,31 @@ def sync(dependencies):
             else:
                 err_list.append(
                     'cannot sync: cannot enter directory {0}'.format(dep.path))
+
+    if err_list:
+        print('\n{0} errors:'.format(len(err_list)))
+        for err in err_list:
+            print('Error: ' + err)
+        return
+
+    if check_dep_consistency(dependencies):
+        print('Error: inconsistent dependencies. Cannot proceed with checkout')
+        return
+
+    for dep in dependencies:
+        print('checking out {0} on {1}...'.format(dep.revision, dep.name))
+        repo_path = os.path.abspath(dep.path)
+        with DoInExistingDir(repo_path) as ctx:
+            if ctx:
+                ret = subprocess.call(
+                    ['git', 'checkout', '-q', dep.revision])
+                if ret:
+                    err_list.append(
+                        'cannot check out rev {0} for repo: {1}'.
+                            format(dep.revision, dep.path))
+            else:
+                err_list.append(
+                    'cannot enter repo at {0} for checkout'.format(dep.path))
 
     if err_list:
         print('\n{0} errors:'.format(len(err_list)))
