@@ -78,20 +78,25 @@ def get_dependency_data(rept_deps_file):
     try:
         contents = rept_deps_file.read()
     except:
-        print('Error: could not read .rept_deps file')
-        return None
+        err = 'could not read the file'
+        return (None, err)
 
     try:
-        # Use literal_eval for safety since we're eval'ing untrusted code.
+        # Use literal_eval() for safety since we're eval'ing untrusted code.
         contents = ast.literal_eval(contents)
+    except SyntaxError as e:
+        err = 'syntax error at line {0}, offset {1}'.format(e.lineno, e.offset)
+        return (None, err)
+    except ValueError:
+        err = 'illegal value used. (Do you have a function call in the file?)'
+        return (None, err)
     except:
-        print('Error: could not parse .rept_deps file')
-        raise
-        # return None
+        err = 'unknown parse error'
+        return (None, err)
 
     if type(contents) != dict:
-        print('Error: .rept_deps must contain a single dictionary')
-        return None
+        err = 'must contain a single dictionary'
+        return (None, err)
 
     def_remote = ''
     def_remote_server = ''
@@ -104,55 +109,57 @@ def get_dependency_data(rept_deps_file):
         def_revision = defaults.get('revision', def_revision)
 
     if 'dependencies' not in contents.keys():
-        print('Error: .rept_deps does not contain "dependencies" list')
-        return None
+        err = '"dependencies" list not found'
+        return (None, err)
 
     dep_list = contents['dependencies']
     if (type(dep_list) != list):
-        print('Error: "dependencies" is not a list')
-        return None
+        err = '"dependencies" is not a list'
+        return (None, err)
 
     dependencies = []
 
     idx = 0
     for dep in dep_list:
         if (type(dep) != dict):
-            print('Error: dependency {0} is not a dictionary'.format(idx))
-            return None
+            err = 'dependency {0} is not a dictionary'.format(idx)
+            return (None, err)
 
         name = dep.get('name')
         path = dep.get('path')
 
         if not name:
-            print('Error: dependency {0} requires a name'.format(idx))
-            return None
+            err = 'dependency {0} requires a name'.format(idx)
+            return (None, err)
 
         if not path:
-            print('Error: dependency {0} requires a path'.format(idx))
-            return None
+            err = 'dependency {0} requires a path'.format(idx)
+            return (None, err)
 
         remote = dep.get('remote', def_remote)
         remote_server = dep.get('remote_server', def_remote_server)
         revision = dep.get('revision', def_revision)
 
         if not remote:
-            print('Error: dependency {0} requires a remote'.format(idx))
-            return None
+            err = 'dependency {0} requires a remote'.format(idx)
+            return (None, err)
 
         if not remote_server:
-            print('Error: dependency {0} requires a remote server'.format(idx))
-            return None
+            err = 'dependency {0} requires a remote server'.format(idx)
+            return (None, err)
 
         if not revision:
-            print('Error: dependency {0} requires a revision'.format(idx))
-            return None
+            err = 'dependency {0} requires a revision'.format(idx)
+            return (None, err)
 
         dependencies.append(
             Dependency(name, path, remote, remote_server, revision))
 
         idx += 1
 
-    return dependencies
+    return (dependencies, err)
+
+################################################################################
 
 def gen_bad_revision_err(dep_name, dep_revision, rev_hash_err, dep_chain):
     err_list = ['Bad revision specified: {0}'.format(dep_revision),
@@ -199,9 +206,9 @@ def check_subdeps(dep_chain, repo_name, repo_full_path, targets):
                 return []
 
             try:
-                dependencies = get_dependency_data(rept_deps_file)
+                dependencies, err = get_dependency_data(rept_deps_file)
                 if dependencies == None: # test for None since [] is allowed
-                    return [('Bad .rept_deps file', new_dep_chain)]
+                    return [(err, new_dep_chain)]
                 return do_check_subdeps(new_dep_chain, dependencies, targets)
             finally:
                 rept_deps_file.close()
@@ -246,6 +253,8 @@ def check_dep_consistency(dependencies):
 
     return failures
 
+################################################################################
+
 def fetch(dependencies):
     err_list = []
 
@@ -262,6 +271,8 @@ def fetch(dependencies):
                 err_list.append(
                     'cannot fetch "{0}": '
                     'invalid repo'.format(dep.path))
+
+################################################################################
 
 def sync(dependencies):
     err_list = []
@@ -298,13 +309,14 @@ def sync(dependencies):
                     'cannot sync: cannot enter directory {0}'.format(dep.path))
 
     if err_list:
-        print('\n{0} errors:'.format(len(err_list)))
+        print('\n{0} errors:'.format(len(err_list)), file=sys.stderr)
         for err in err_list:
-            print('Error: ' + err)
+            print('- ' + err, file=sys.stderr)
         return
 
     if check_dep_consistency(dependencies):
-        print('Error: inconsistent dependencies. Cannot proceed with checkout')
+        print('Error: inconsistent dependencies. Cannot proceed with checkout',
+            file=sys.stderr)
         return
 
     for dep in dependencies:
@@ -323,11 +335,13 @@ def sync(dependencies):
                     'cannot enter repo at {0} for checkout'.format(dep.path))
 
     if err_list:
-        print('\n{0} errors:'.format(len(err_list)))
+        print('\n{0} errors:'.format(len(err_list)), file=sys.stderr)
         for err in err_list:
-            print('Error: ' + err)
+            print('- ' + err, file=sys.stderr)
     else:
         print('\nSuccess')
+
+################################################################################
 
 def exec_cmd(argv, dependencies):
     if argv[0] == 'sync':
@@ -337,7 +351,7 @@ def exec_cmd(argv, dependencies):
     elif argv[0] == 'chk-deps':
         check_dep_consistency(dependencies)
     else:
-        print('unknown command: {0}'.format(argv[0]))
+        sys.exit('rept: unknown command: {0}'.format(argv[0]))
 
 def main(argv):
     if len(argv) == 0:
@@ -348,13 +362,14 @@ def main(argv):
     # execution.
     rept_deps_file = find_dep_file(True)
     if not rept_deps_file:
-        print('Error: could not find .rept_deps file')
+        sys.exit('rept: could not find .rept_deps file')
         return
 
     try:
-        dependencies = get_dependency_data(rept_deps_file)
-        if dependencies:
-            exec_cmd(argv, dependencies)
+        dependencies, err = get_dependency_data(rept_deps_file)
+        if not dependencies:
+            sys.exit('rept: could not load .rept_deps file: ' + err)
+        exec_cmd(argv, dependencies)
     finally:
         rept_deps_file.close()
 
