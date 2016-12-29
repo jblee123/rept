@@ -29,6 +29,12 @@ class DoInExistingDir(object):
 
 ################################################################################
 
+def printerr(s):
+    print(s, file=sys.stderr)
+
+def print_unkown_param_or_opt(param):
+    printerr('error: unknown parameter or option \'{0}\''.format(param))
+
 def get_rev_hash(rev):
     p = subprocess.Popen(
         ['git', 'rev-parse', rev],
@@ -49,12 +55,26 @@ def get_rev_hash_from_repo(rev, repo_dir):
             err = 'could not enter the repo'
     return (rev_hash, err)
 
-# def get_branch_exists(branch_name):
-#     p = subprocess.Popen(
-#         ['git', 'rev-parse', '--verify', branch_name],
-#         stdout=subprocess.PIPE,
-#         stderr=subprocess.PIPE)
-#     return p.wait() == 0
+def get_branch_exists(branch_name):
+    p = subprocess.Popen(
+        ['git', 'rev-parse', '--verify', branch_name],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE)
+    return p.wait() == 0
+
+def get_any_remote_branch_exists(branch_name):
+    p = subprocess.Popen(
+        ['git', 'branch', '-a'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE)
+    out, err = p.communicate()
+
+    if err:
+        return []
+
+    branches = str(out,'utf-8').strip().split()
+    return [branch for branch in branches if
+        branch.startswith('remotes/') and branch.endswith('/' + branch_name)]
 
 def find_dep_file(search_up):
     cur_path = os.getcwd()
@@ -71,19 +91,13 @@ def find_dep_file(search_up):
 
     return file
 
-def get_dependency_data(rept_deps_file):
+def parse_dependency_data(rept_deps_str):
     err = None
     contents = None
 
     try:
-        contents = rept_deps_file.read()
-    except:
-        err = 'could not read the file'
-        return (None, err)
-
-    try:
         # Use literal_eval() for safety since we're eval'ing untrusted code.
-        contents = ast.literal_eval(contents)
+        contents = ast.literal_eval(rept_deps_str)
     except SyntaxError as e:
         err = 'syntax error at line {0}, offset {1}'.format(e.lineno, e.offset)
         return (None, err)
@@ -159,16 +173,138 @@ def get_dependency_data(rept_deps_file):
 
     return (dependencies, err)
 
+def get_dependency_data_from_file(rept_deps_file):
+    err = None
+    contents = None
+
+    try:
+        contents = rept_deps_file.read()
+    except:
+        err = 'could not read the file'
+        return (None, err)
+
+    return parse_dependency_data(contents)
+
+def print_std_err(err):
+    if (type(err) == str):
+        printerr(err)
+    else:
+        printerr(err[0])
+        for msg in err[1:]:
+            printerr('  ' + msg)
+
+def print_std_err_list(errs):
+    for err in errs:
+        print_std_err(err)
+
+def gen_bad_revision_err_str(dep_name, dep_revision, rev_hash_err):
+    return ['Bad revision specified: {0}'.format(dep_revision),
+            'for repo: {0}'.format(dep_name),
+            rev_hash_err]
+
 ################################################################################
 
-def gen_bad_revision_err(dep_name, dep_revision, rev_hash_err, dep_chain):
-    err_list = ['Bad revision specified: {0}'.format(dep_revision),
-                'for repo: {0}'.format(dep_name),
-                rev_hash_err]
-    return (err_list, dep_chain)
+def can_create_feature_branch(branch_name, remote_name, dep_name, errs):
+    if dep_name:
+        err_prefix = 'dependency {0}'.format(dep_name)
+    else:
+        err_prefix = 'this repo'
+
+    remote_branch_name = remote_name + '/' + branch_name
+    if get_branch_exists(branch_name):
+        errs.append(
+            '{0} already contains a local branch: {1}'.
+            format(err_prefix, branch_name))
+        return
+
+    if dep_name:
+        if get_branch_exists(remote_branch_name):
+            errs.append(
+                '{0} already contains a remote branch: {1}'.
+                format(err_prefix, remote_branch_name))
+    else:
+        remotes = get_any_remote_branch_exists(branch_name)
+        if remotes:
+            len_remotes_prefix = len('remotes/')
+            remotes = [remote[len_remotes_prefix:] for remote in remotes]
+            if len(remotes) == 1:
+                errs.append(
+                    '{0} already contains a remote branch: {1}'.
+                    format(err_prefix, remotes[0]))
+            else:
+                errs2 = [
+                    '{0} already contains remote branches:'.
+                    format(err_prefix)]
+                errs2 += remotes
+                errs.append(errs2)
+
+def cmd_feature(dependencies, argv):
+    if (len(argv) == 0):
+        sys.exit('rept: missing feature name')
+
+    errs = []
+    feature_name = argv[0]
+
+    can_create_feature_branch(feature_name, '', '', errs)
+
+    for dep in dependencies:
+        repo_path = os.path.abspath(dep.path)
+        remote_branch_name = dep.remote + '/' + feature_name
+        with DoInExistingDir(repo_path) as ctx:
+            if ctx:
+                can_create_feature_branch(feature_name, dep.remote, dep.name, errs)
+            else:
+                errs.append('Missing repo: {0}'.format(repo_name))
+        dep_hash, hash_err = get_rev_hash_from_repo(
+            dep.revision, repo_path)
+        if not dep_hash:
+            errs.append(gen_bad_revision_err_str(
+                dep.name, dep.revision, hash_err))
+
+    if errs:
+        print_std_err_list(errs)
+        sys.exit(1)
+
+    created_branches = 0
+
+    ret = subprocess.call(['git', 'branch', '-q', feature_name])
+    if (not ret):
+        created_branches += 1
+    else:
+        errs.append(
+            'cannot create branch "{0}" in this repo'.format(feature_name))
+
+    for dep in dependencies:
+        repo_path = os.path.abspath(dep.path)
+        remote_branch_name = dep.remote + '/' + feature_name
+        with DoInExistingDir(repo_path) as ctx:
+            if ctx:
+                ret = subprocess.call(
+                    ['git', 'branch', '-q', feature_name, dep.revision])
+                if (not ret):
+                    created_branches += 1
+                else:
+                    errs.append(
+                        'cannot create branch "{0}": '
+                        'in repo {1}'.format(feature_name, dep.remote))
+            else:
+                errs.append('Missing repo: {0}'.format(dep.path))
+
+    print('created {0}/{1} branches'.
+        format(created_branches, len(dependencies) + 1))
+
+    if errs:
+        print_std_err_list(errs)
+        sys.exit(1)
+
+################################################################################
+
+def gen_chkdeps_bad_revision_err(dep_name, dep_revision, rev_hash_err, dep_chain):
+    errs = gen_bad_revision_err_str(dep_name, dep_revision, rev_hash_err)
+    return (errs, dep_chain)
 
 def do_check_subdeps(dep_chain, dependencies, targets):
-    failures = []
+    errs = []
     for dep in dependencies:
         cur_repo_path = os.path.abspath(dep.path)
         target_for_dep = targets.get(cur_repo_path)
@@ -176,20 +312,20 @@ def do_check_subdeps(dep_chain, dependencies, targets):
             dep_hash, hash_err = get_rev_hash_from_repo(
                 dep.revision, cur_repo_path)
             if not dep_hash:
-                failures.append(gen_bad_revision_err(
+                errs.append(gen_chkdeps_bad_revision_err(
                     dep.name, dep.revision, hash_err, dep_chain))
             elif dep_hash != target_for_dep.rev_hash:
-                failures.append(
+                errs.append(
                     (['Inconsistent dependency for {0}:'.format(dep.name),
                       'specified: {0} ({1})'.format(dep.revision, dep_hash),
                       'required: {0} ({1})'.format(
                         target_for_dep.dep.revision, target_for_dep.rev_hash)],
                      dep_chain))
         else:
-            failures.extend(
+            errs.extend(
                 check_subdeps(dep_chain, dep.name, cur_repo_path, targets))
 
-    return failures
+    return errs
 
 def check_subdeps(dep_chain, repo_name, repo_full_path, targets):
     new_dep_chain = dep_chain + [repo_full_path]
@@ -206,7 +342,7 @@ def check_subdeps(dep_chain, repo_name, repo_full_path, targets):
                 return []
 
             try:
-                dependencies, err = get_dependency_data(rept_deps_file)
+                dependencies, err = get_dependency_data_from_file(rept_deps_file)
                 if dependencies == None: # test for None since [] is allowed
                     return [(err, new_dep_chain)]
                 return do_check_subdeps(new_dep_chain, dependencies, targets)
@@ -215,8 +351,8 @@ def check_subdeps(dep_chain, repo_name, repo_full_path, targets):
         else:
             return [('Missing repo: {0}'.format(repo_name), new_dep_chain)]
 
-def check_dep_consistency(dependencies):
-    failures = []
+def do_check_dep_consistency(dependencies):
+    errs = []
     dep_chain_so_far = [os.getcwd()]
 
     target_list = []
@@ -230,33 +366,47 @@ def check_dep_consistency(dependencies):
             target_list.append(target_dep)
             target_dict[repo_path] = target_dep
         else:
-            failures.append(gen_bad_revision_err(
+            errs.append(gen_chkdeps_bad_revision_err(
                 dep.name, dep.revision, hash_err, dep_chain_so_far))
 
     for target in target_list:
-        failures.extend(
+        errs.extend(
             check_subdeps(dep_chain_so_far, dep.name, target.full_path,
                 target_dict))
 
-    if failures:
-        for failure in failures:
-            dep_chain = [os.path.basename(dirname) for dirname in failure[1]]
-            if (type(failure[0]) == str):
-                print(failure[0])
-            else:
-                print(failure[0][0])
-                for msg in failure[0][1:]:
-                    print('  ' + msg)
-            print('  Detected in: ' + dep_chain[-1])
-            for dep in reversed(dep_chain[:-1]):
-                print('    included by: ' + dep)
+    for err in errs:
+        dep_chain = [os.path.basename(dirname) for dirname in err[1]]
+        print_std_err(err[0])
+        printerr('  Detected in: ' + dep_chain[-1])
+        for dep in reversed(dep_chain[:-1]):
+            printerr('    included by: ' + dep)
 
-    return failures
+    return not errs
+
+def print_check_dep_usage():
+    printerr('usage: rept chk-deps')
+
+def cmd_check_dep(dependencies, params):
+    if len(params):
+        print_unkown_param_or_opt(params[0])
+        print_check_dep_usage()
+        sys.exit(1)
+
+    if not do_check_dep_consistency(dependencies):
+        sys.exit(1)
 
 ################################################################################
 
-def fetch(dependencies):
-    err_list = []
+def print_fetch_usage():
+    printerr('usage: rept fetch')
+
+def cmd_fetch(dependencies, params):
+    if len(params):
+        print_unkown_param_or_opt(params[0])
+        print_fetch_usage()
+        sys.exit(1)
+
+    errs = []
 
     for dep in dependencies:
         print('fetching ' + dep.name + '...')
@@ -264,18 +414,30 @@ def fetch(dependencies):
             if ctx:
                 ret = subprocess.call(['git', 'fetch', dep.remote])
                 if (ret):
-                    err_list.append(
+                    errs.append(
                         'cannot fetch "{0}": '
                         'fetch failed'.format(dep.path))
             else:
-                err_list.append(
+                errs.append(
                     'cannot fetch "{0}": '
                     'invalid repo'.format(dep.path))
 
+    if errs:
+        print_std_err_list(errs)
+        sys.exit(1)
+
 ################################################################################
 
-def sync(dependencies):
-    err_list = []
+def print_sync_usage():
+    printerr('usage: rept sync')
+
+def cmd_sync(dependencies, params):
+    if len(params):
+        print_unkown_param_or_opt(params[0])
+        print_sync_usage()
+        sys.exit(1)
+
+    errs = []
 
     for dep in dependencies:
         print('updating repo {0}...'.format(dep.name))
@@ -291,7 +453,7 @@ def sync(dependencies):
                 if (os.path.isdir('.git')):
                     ret = subprocess.call(['git', 'fetch', dep.remote])
                     if (ret):
-                        err_list.append(
+                        errs.append(
                             'cannot sync "{0}": '
                             'fetch failed'.format(dep.path))
                 # No .git dir. Do a clone.
@@ -301,23 +463,22 @@ def sync(dependencies):
                         ['git', 'clone', '-o', dep.remote,
                          full_remote_repo_name, '.'])
                     if (ret):
-                        err_list.append(
+                        errs.append(
                             'cannot sync "{0}": '
                             'fetch failed'.format(dep.path))
             else:
-                err_list.append(
+                errs.append(
                     'cannot sync: cannot enter directory {0}'.format(dep.path))
 
-    if err_list:
-        print('\n{0} errors:'.format(len(err_list)), file=sys.stderr)
-        for err in err_list:
-            print('- ' + err, file=sys.stderr)
-        return
+    if errs:
+        printerr('\n{0} errors:'.format(len(errs)))
+        for err in errs:
+            printerr('- ' + err)
+        sys.exit(1)
 
-    if check_dep_consistency(dependencies):
-        print('Error: inconsistent dependencies. Cannot proceed with checkout',
-            file=sys.stderr)
-        return
+    if not check_dep_consistency(dependencies):
+        sys.exit(
+            'error: inconsistent dependencies. cannot proceed with checkout')
 
     for dep in dependencies:
         print('checking out {0} on {1}...'.format(dep.revision, dep.name))
@@ -327,29 +488,36 @@ def sync(dependencies):
                 ret = subprocess.call(
                     ['git', 'checkout', '-q', dep.revision])
                 if ret:
-                    err_list.append(
+                    errs.append(
                         'cannot check out rev {0} for repo: {1}'.
                             format(dep.revision, dep.path))
             else:
-                err_list.append(
+                errs.append(
                     'cannot enter repo at {0} for checkout'.format(dep.path))
 
-    if err_list:
-        print('\n{0} errors:'.format(len(err_list)), file=sys.stderr)
-        for err in err_list:
-            print('- ' + err, file=sys.stderr)
+    if errs:
+        printerr('\n{0} errors:'.format(len(errs)))
+        for err in errs:
+            printerr('- ' + err)
+        sys.exit(1)
     else:
         print('\nSuccess')
 
 ################################################################################
 
 def exec_cmd(argv, dependencies):
+    params = argv[1:]
+
     if argv[0] == 'sync':
-        sync(dependencies)
+        cmd_sync(dependencies, params)
     elif argv[0] == 'fetch':
-        fetch(dependencies)
-    elif argv[0] == 'chk-deps':
-        check_dep_consistency(dependencies)
+        cmd_fetch(dependencies, params)
+    elif (argv[0] == 'chk-deps' or
+          argv[0] == 'cd'):
+        cmd_check_dep(dependencies, params)
+    elif (argv[0] == 'feature' or
+          argv[0] == 'feat'):
+        cmd_feature(dependencies, params)
     else:
         sys.exit('rept: unknown command: {0}'.format(argv[0]))
 
@@ -366,7 +534,7 @@ def main(argv):
         return
 
     try:
-        dependencies, err = get_dependency_data(rept_deps_file)
+        dependencies, err = get_dependency_data_from_file(rept_deps_file)
         if not dependencies:
             sys.exit('rept: could not load .rept_deps file: ' + err)
         exec_cmd(argv, dependencies)
