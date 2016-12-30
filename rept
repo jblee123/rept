@@ -2,6 +2,7 @@
 
 import ast
 import collections
+import getopt
 import os
 import subprocess
 import sys
@@ -28,12 +29,44 @@ class DoInExistingDir(object):
         return isinstance(value, OSError)
 
 ################################################################################
+# General util funcs
+################################################################################
 
 def printerr(s):
     print(s, file=sys.stderr)
 
-def print_unkown_param_or_opt(param):
-    printerr('error: unknown parameter or option \'{0}\''.format(param))
+def print_unknown_arg(param):
+    printerr('error: unknown argument \'{0}\''.format(param))
+
+def print_std_err(err):
+    if (type(err) == str):
+        printerr(err)
+    else:
+        printerr(err[0])
+        for msg in err[1:]:
+            printerr('  ' + msg)
+
+def print_std_err_list(errs):
+    for err in errs:
+        print_std_err(err)
+
+def parse_args(args, short_opts, long_opts=[], usage_fn=None):
+    try:
+        return getopt.getopt(args, short_opts, long_opts)
+    except getopt.GetoptError as e:
+        printerr('error: ' + e.msg)
+        if usage_fn:
+            usage_fn()
+        sys.exit(1)
+
+def gen_bad_revision_err_str(dep_name, dep_revision, rev_hash_err):
+    return ['Bad revision specified: {0}'.format(dep_revision),
+            'for repo: {0}'.format(dep_name),
+            rev_hash_err]
+
+################################################################################
+# git util funcs
+################################################################################
 
 def get_rev_hash(rev):
     p = subprocess.Popen(
@@ -62,6 +95,21 @@ def get_branch_exists(branch_name):
         stderr=subprocess.PIPE)
     return p.wait() == 0
 
+def is_current_branch(branch_name):
+    p = subprocess.Popen(
+        ['git', 'branch', '-a'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE)
+    out, err = p.communicate()
+
+    if err:
+        return False
+
+    out = str(out,'utf-8')
+    branches = [branch.strip() for branch in out.split(os.linesep)]
+    branch = [branch[2:] for branch in branches if branch.startswith('* ')]
+    return branch[0] == branch_name if branch else False
+
 def get_any_remote_branch_exists(branch_name):
     p = subprocess.Popen(
         ['git', 'branch', '-a'],
@@ -72,9 +120,26 @@ def get_any_remote_branch_exists(branch_name):
     if err:
         return []
 
-    branches = str(out,'utf-8').strip().split()
+    branches = str(out,'utf-8').split()
     return [branch for branch in branches if
         branch.startswith('remotes/') and branch.endswith('/' + branch_name)]
+
+def is_branch_merged(branch_name):
+    p = subprocess.Popen(
+        ['git', 'branch', '--merged'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE)
+    out, err = p.communicate()
+
+    if err:
+        return False
+
+    branches = str(out,'utf-8').split()
+    return branch_name in branches
+
+################################################################################
+# dependency funcs
+################################################################################
 
 def find_dep_file(search_up):
     cur_path = os.getcwd()
@@ -185,24 +250,15 @@ def get_dependency_data_from_file(rept_deps_file):
 
     return parse_dependency_data(contents)
 
-def print_std_err(err):
-    if (type(err) == str):
-        printerr(err)
-    else:
-        printerr(err[0])
-        for msg in err[1:]:
-            printerr('  ' + msg)
-
-def print_std_err_list(errs):
-    for err in errs:
-        print_std_err(err)
-
-def gen_bad_revision_err_str(dep_name, dep_revision, rev_hash_err):
-    return ['Bad revision specified: {0}'.format(dep_revision),
-            'for repo: {0}'.format(dep_name),
-            rev_hash_err]
-
 ################################################################################
+# feature cmd funcs
+################################################################################
+
+FeatureArgs = collections.namedtuple('FeatureArgs',
+    'name delete force push push_only')
+
+FeatureBranchState = collections.namedtuple('FeatureBranchState',
+    'exists is_current has_remote remote_is_current is_merged')
 
 def can_create_feature_branch(branch_name, remote_name, dep_name, errs):
     if dep_name:
@@ -238,21 +294,17 @@ def can_create_feature_branch(branch_name, remote_name, dep_name, errs):
                 errs2 += remotes
                 errs.append(errs2)
 
-def cmd_feature(dependencies, argv):
-    if (len(argv) == 0):
-        sys.exit('rept: missing feature name')
-
+def create_feature(dependencies, feat_args):
     errs = []
-    feature_name = argv[0]
 
-    can_create_feature_branch(feature_name, '', '', errs)
+    can_create_feature_branch(feat_args.name, '', '', errs)
 
     for dep in dependencies:
         repo_path = os.path.abspath(dep.path)
-        remote_branch_name = dep.remote + '/' + feature_name
         with DoInExistingDir(repo_path) as ctx:
             if ctx:
-                can_create_feature_branch(feature_name, dep.remote, dep.name, errs)
+                can_create_feature_branch(
+                    feat_args.name, dep.remote, dep.name, errs)
             else:
                 errs.append('Missing repo: {0}'.format(repo_name))
         dep_hash, hash_err = get_rev_hash_from_repo(
@@ -267,26 +319,25 @@ def cmd_feature(dependencies, argv):
 
     created_branches = 0
 
-    ret = subprocess.call(['git', 'branch', '-q', feature_name])
+    ret = subprocess.call(['git', 'branch', '-q', feat_args.name])
     if (not ret):
         created_branches += 1
     else:
         errs.append(
-            'cannot create branch "{0}" in this repo'.format(feature_name))
+            'cannot create branch "{0}" in this repo'.format(feat_args.name))
 
     for dep in dependencies:
         repo_path = os.path.abspath(dep.path)
-        remote_branch_name = dep.remote + '/' + feature_name
         with DoInExistingDir(repo_path) as ctx:
             if ctx:
                 ret = subprocess.call(
-                    ['git', 'branch', '-q', feature_name, dep.revision])
+                    ['git', 'branch', '-q', feat_args.name, dep.revision])
                 if (not ret):
                     created_branches += 1
                 else:
                     errs.append(
                         'cannot create branch "{0}": '
-                        'in repo {1}'.format(feature_name, dep.remote))
+                        'in repo {1}'.format(feat_args.name, dep.name))
             else:
                 errs.append('Missing repo: {0}'.format(dep.path))
 
@@ -297,6 +348,199 @@ def cmd_feature(dependencies, argv):
         print_std_err_list(errs)
         sys.exit(1)
 
+def get_feature_branch_state(branch_name, remote_name):
+
+    remote_branch_name = remote_name + '/' + branch_name
+
+    exists = get_branch_exists(branch_name)
+    is_current = is_current_branch(branch_name)
+    has_remote = get_branch_exists(remote_branch_name)
+    remote_is_current = is_current_branch(remote_branch_name)
+    is_merged = is_branch_merged(branch_name)
+
+    return FeatureBranchState(
+        exists, is_current, has_remote, remote_is_current, is_merged)
+
+def delete_feature_branch(dep, del_cmd, fail_list, errs):
+    success = False
+    if not dep:
+        ret = subprocess.call(del_cmd)
+        if (not ret):
+            success = True
+        else:
+            fail_list.append('this repo')
+    else:
+        repo_path = os.path.abspath(dep.path)
+        with DoInExistingDir(repo_path) as ctx:
+            if ctx:
+                ret = subprocess.call(del_cmd)
+                if (not ret):
+                    success = True
+                else:
+                    fail_list.append('repo {0}'.format(dep.name))
+            else:
+                errs.append('Missing repo: {0}'.format(dep.path))
+
+    return success
+
+def delete_feature(dependencies, this_remote, feat_args):
+    errs = []
+    branch_states = []
+
+    state = get_feature_branch_state(feat_args.name, this_remote)
+    branch_states.append((None, state))
+
+    for dep in dependencies:
+        repo_path = os.path.abspath(dep.path)
+        with DoInExistingDir(repo_path) as ctx:
+            if ctx:
+                state = get_feature_branch_state(feat_args.name, dep.remote)
+                branch_states.append((dep, state))
+            else:
+                errs.append('Missing repo: {0}'.format(dep.path))
+
+    if errs:
+        print_std_err_list(errs)
+        sys.exit(1)
+
+    exists = [state for state in branch_states if state[1].exists]
+    are_current = [state for state in branch_states if state[1].is_current]
+    has_remote = [state for state in branch_states if state[1].has_remote]
+    remotes_are_current = [
+        state for state in branch_states if state[1].remote_is_current]
+    unmerged = [state for state in branch_states if not state[1].is_merged]
+
+    def print_bad_repos(branch_states):
+        for dep, state in branch_states:
+            printerr('  - {0}'.format(dep.name if dep else 'this repo'))
+
+    if are_current and not feat_args.push_only:
+        printerr('error: cannot delete branches checked out in repos:')
+        print_bad_repos(are_current)
+        sys.exit(1)
+
+    if remotes_are_current and (feat_args.push or feat_args.push_only):
+        printerr('error: cannot delete remote branches checked out in repos:')
+        print_bad_repos(remotes_are_current)
+        sys.exit(1)
+
+    if unmerged and not feat_args.force and not feat_args.push_only:
+        printerr('error: cannot delete unmerged branches (use -D to force) in repos:')
+        print_bad_repos(unmerged)
+        sys.exit(1)
+
+    deleted_branches_local = 0
+    deleted_branches_remote = 0
+
+    del_opt = '-D' if feat_args.force else '-d'
+    del_local_cmd = ['git', 'branch', del_opt, '-q', feat_args.name]
+
+    delete_locals = not feat_args.push_only
+    delete_remotes = feat_args.push or feat_args.push_only
+
+    local_del_fail = []
+    remote_del_fail = []
+
+    if delete_locals:
+        for dep, state in exists:
+            repo_name = dep.name if dep else 'this repo'
+            print('deleting local branch in {0}'.format(repo_name))
+
+            if delete_feature_branch(dep, del_local_cmd, local_del_fail, errs):
+                deleted_branches_local += 1
+
+    if delete_remotes:
+        for dep, state in has_remote:
+            repo_name = dep.name if dep else 'this repo'
+            print('deleting remote branch in {0}'.format(repo_name))
+
+            remote = dep.remote if dep else this_remote
+            push_target = ':{0}'.format(feat_args.name)
+            del_remote_cmd = ['git', 'push', '-q', remote, push_target]
+
+            if delete_feature_branch(dep, del_remote_cmd, remote_del_fail, errs):
+                deleted_branches_remote += 1
+
+    def print_deletion_summary(
+        failures, branch_type, del_count, del_attempt_count):
+        print('deleted {0}/{1} {2} branches'.
+            format(del_count, del_attempt_count, branch_type))
+        if failures:
+            printerr("error: couldn't delete branches from:")
+        for failure in failures:
+            print('  {0}'.format(failure))
+
+    if delete_locals:
+        print_deletion_summary(
+            local_del_fail, 'local', deleted_branches_local, len(exists))
+
+    if delete_remotes:
+        print_deletion_summary(
+            remote_del_fail, 'remote', deleted_branches_remote, len(has_remote))
+
+    if errs:
+        print_std_err_list(errs)
+        sys.exit(1)
+
+def parse_feature_args(args):
+    parsed_args = parse_args(args, 'dD', ['push', 'push-only'], usage_fn=print_feature_usage)
+
+    if len(parsed_args[1]) == 0:
+        printerr('error: missing feature name')
+        print_feature_usage()
+        sys.exit(1)
+
+    if len(parsed_args[1]) > 1:
+        print_unknown_arg(parsed_args[1][1])
+        print_feature_usage()
+        sys.exit(1)
+
+    delete = False
+    force = False
+    push = False
+    push_only = False
+    for opt, optarg in parsed_args[0]:
+        if opt == '-d': delete = True
+        if opt == '-D':
+            delete = True
+            force = True
+        if opt == '--push': push = True
+        if opt == '--push-only': push_only = True
+
+    feature_name = parsed_args[1][0]
+
+    if push and not delete:
+        printerr("error: '--push' can only be used with delete")
+        print_feature_usage()
+        sys.exit(1)
+
+    if push_only and not delete:
+        printerr("error: '--push-only' can only be used with delete")
+        print_feature_usage()
+        sys.exit(1)
+
+    if push and push_only:
+        printerr("error: '--push' and '--push-only' cannot be used together")
+        print_feature_usage()
+        sys.exit(1)
+
+    return FeatureArgs(feature_name, delete, force, push, push_only)
+
+
+def print_feature_usage():
+    printerr('usage: rept feature <feature-name>')
+    printerr('   or: rept feature (-d | -D) [--push | --push-only] <feature-name>')
+
+def cmd_feature(dependencies, this_remote, args):
+    feat_args = parse_feature_args(args)
+
+    if feat_args.delete:
+        delete_feature(dependencies, this_remote, feat_args)
+    else:
+        create_feature(dependencies, feat_args)
+
+################################################################################
+# chk-deps cmd funcs
 ################################################################################
 
 def gen_chkdeps_bad_revision_err(dep_name, dep_revision, rev_hash_err, dep_chain):
@@ -386,9 +630,11 @@ def do_check_dep_consistency(dependencies):
 def print_check_dep_usage():
     printerr('usage: rept chk-deps')
 
-def cmd_check_dep(dependencies, params):
-    if len(params):
-        print_unkown_param_or_opt(params[0])
+def cmd_check_dep(dependencies, args):
+    parsed_args = parse_args(args, '', usage_fn=print_check_dep_usage)
+
+    if len(parsed_args[1]):
+        print_unknown_arg(parsed_args[1][0])
         print_check_dep_usage()
         sys.exit(1)
 
@@ -396,13 +642,17 @@ def cmd_check_dep(dependencies, params):
         sys.exit(1)
 
 ################################################################################
+# fetch cmd funcs
+################################################################################
 
 def print_fetch_usage():
     printerr('usage: rept fetch')
 
-def cmd_fetch(dependencies, params):
-    if len(params):
-        print_unkown_param_or_opt(params[0])
+def cmd_fetch(dependencies, args):
+    parsed_args = parse_args(args, '', usage_fn=print_fetch_usage)
+
+    if len(parsed_args[1]):
+        print_unknown_arg(parsed_args[1][0])
         print_fetch_usage()
         sys.exit(1)
 
@@ -427,13 +677,17 @@ def cmd_fetch(dependencies, params):
         sys.exit(1)
 
 ################################################################################
+# sync cmd funcs
+################################################################################
 
 def print_sync_usage():
     printerr('usage: rept sync')
 
-def cmd_sync(dependencies, params):
-    if len(params):
-        print_unkown_param_or_opt(params[0])
+def cmd_sync(dependencies, args):
+    parsed_args = parse_args(args, '', usage_fn=print_sync_usage)
+
+    if len(parsed_args[1]):
+        print_unknown_arg(parsed_args[1][0])
         print_sync_usage()
         sys.exit(1)
 
@@ -504,20 +758,22 @@ def cmd_sync(dependencies, params):
         print('\nSuccess')
 
 ################################################################################
+# main funcs
+################################################################################
 
 def exec_cmd(argv, dependencies):
-    params = argv[1:]
+    args = argv[1:]
 
     if argv[0] == 'sync':
-        cmd_sync(dependencies, params)
+        cmd_sync(dependencies, args)
     elif argv[0] == 'fetch':
-        cmd_fetch(dependencies, params)
+        cmd_fetch(dependencies, args)
     elif (argv[0] == 'chk-deps' or
           argv[0] == 'cd'):
-        cmd_check_dep(dependencies, params)
+        cmd_check_dep(dependencies, args)
     elif (argv[0] == 'feature' or
           argv[0] == 'feat'):
-        cmd_feature(dependencies, params)
+        cmd_feature(dependencies, 'origin', args)
     else:
         sys.exit('rept: unknown command: {0}'.format(argv[0]))
 
