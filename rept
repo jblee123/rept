@@ -9,8 +9,6 @@ import sys
 
 Dependency = collections.namedtuple('Dependency',
     'name path remote remote_server revision')
-TargetDep = collections.namedtuple('TargetDep',
-    'dep full_path rev_hash')
 LocalConfig = collections.namedtuple('LocalConfig',
     'remote')
 
@@ -66,17 +64,23 @@ def gen_bad_revision_err_str(dep_name, dep_revision, rev_hash_err):
             'for repo: {0}'.format(dep_name),
             rev_hash_err]
 
+def exec_proc(cmd):
+    p = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE)
+    out, err = p.communicate()
+    out = str(out,'utf-8').strip()
+    err = str(err,'utf-8').strip()
+    return p.returncode, out, err
+
 ################################################################################
 # git util funcs
 ################################################################################
 
 def get_rev_hash(rev):
-    p = subprocess.Popen(
-        ['git', 'rev-parse', rev],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE)
-    out, err = p.communicate()
-    return str(out,'utf-8').strip() if not err else None
+    ret, out, err = exec_proc(['git', 'rev-parse', rev])
+    return out if not ret else None
 
 def get_rev_hash_from_repo(rev, repo_dir):
     rev_hash = None
@@ -91,78 +95,53 @@ def get_rev_hash_from_repo(rev, repo_dir):
     return (rev_hash, err)
 
 def get_branch_exists(branch_name):
-    p = subprocess.Popen(
-        ['git', 'rev-parse', '--verify', branch_name],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE)
-    return p.wait() == 0
+    ret, out, err = exec_proc(['git', 'rev-parse', '--verify', branch_name])
+    return ret == 0
 
 def is_current_branch(branch_name):
-    p = subprocess.Popen(
-        ['git', 'branch'],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE)
-    out, err = p.communicate()
-
-    if err:
+    ret, out, err = exec_proc(['git', 'branch'])
+    if ret:
         return False
 
-    out = str(out,'utf-8')
     branches = [branch.strip() for branch in out.split(os.linesep)]
     branch = [branch[2:] for branch in branches if branch.startswith('* ')]
     return branch[0] == branch_name if branch else False
 
 def get_any_remote_branch_exists(branch_name):
-    p = subprocess.Popen(
-        ['git', 'branch', '-a'],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE)
-    out, err = p.communicate()
-
-    if err:
+    ret, out, err = exec_proc(['git', 'branch', '-a'])
+    if ret:
         return []
 
-    branches = str(out,'utf-8').split()
+    branches = out.split()
     return [branch for branch in branches if
         branch.startswith('remotes/') and branch.endswith('/' + branch_name)]
 
 def is_branch_merged(branch_name):
-    p = subprocess.Popen(
-        ['git', 'branch', '--merged'],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE)
-    out, err = p.communicate()
-
-    if err:
+    ret, out, err = exec_proc(['git', 'branch', '--merged'])
+    if ret:
         return False
 
-    branches = str(out,'utf-8').split()
+    branches = out.split()
     return branch_name in branches
 
 def get_remotes():
-    p = subprocess.Popen(
-        ['git', 'remote'],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE)
-    out, err = p.communicate()
-
-    if err:
+    ret, out, err = exec_proc(['git', 'remote'])
+    if ret:
         return []
 
-    out = str(out,'utf-8').strip()
     return [remote.strip() for remote in out.split(os.linesep)]
 
 def is_clean_working_directory():
-    p = subprocess.Popen(
-        ['git', 'status', '--porcelain'],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE)
-    out, err = p.communicate()
-
-    if err:
+    ret, out, err = exec_proc(['git', 'status', '--porcelain'])
+    if ret:
         return False
 
-    return str(out,'utf-8').strip() == ''
+    return out == ''
+
+def get_file_contents(rev, filename):
+    spec = '{0}:{1}'.format(rev, filename)
+    ret, out, err = exec_proc(['git', 'show', spec])
+    return out if not ret else None
 
 ################################################################################
 # dependency and config funcs
@@ -788,82 +767,101 @@ def cmd_feature(dependencies, local_config, args):
 
 ################################################################################
 # chk-deps cmd funcs
+#
+# The "chk-deps" command inspects the dependencies for consistency. While the
+# .rept_deps files lists all dpendencies directly (there are no implicitly
+# inherited dependencies), conflicts are still possible. For instance, two
+# dependencies may each depend on different versions of a third dependency.
 ################################################################################
 
-def gen_chkdeps_bad_revision_err(dep_name, dep_revision, rev_hash_err, dep_chain):
-    errs = gen_bad_revision_err_str(dep_name, dep_revision, rev_hash_err)
-    return (errs, dep_chain)
-
-def do_check_subdeps(dep_chain, dependencies, targets):
+# Check each dependency for inconsistencies against the target dependencies.
+def check_subdeps(dep_chain, dependencies, targets):
     errs = []
     for dep in dependencies:
-        cur_repo_path = os.path.abspath(dep.path)
-        target_for_dep = targets.get(cur_repo_path)
-        if target_for_dep:
-            dep_hash, hash_err = get_rev_hash_from_repo(
-                dep.revision, cur_repo_path)
-            if not dep_hash:
-                errs.append(gen_chkdeps_bad_revision_err(
-                    dep.name, dep.revision, hash_err, dep_chain))
-            elif dep_hash != target_for_dep.rev_hash:
-                errs.append(
-                    (['Inconsistent dependency for {0}:'.format(dep.name),
-                      'specified: {0} ({1})'.format(dep.revision, dep_hash),
-                      'required: {0} ({1})'.format(
-                        target_for_dep.dep.revision, target_for_dep.rev_hash)],
-                     dep_chain))
+        dep_abs_path = os.path.abspath(dep.path)
+        target_dep = targets.get(dep_abs_path)
+
+        # Because dependencies are flat, the main repo's .rept_deps file must
+        # list *all* needed repos all the way down through the dependency tree.
+        # So if this dep repo is NOT in the targets, then it's missing from the
+        # main .rept_deps file, which is bad.
+        if not target_dep:
+            err = "Unlisted dependency '{0}' found".format(repo_name)
+            errs.append((err, dep_chain))
+
+        # We're requiring that revision names, not just commits have to match.
+        # Technically commits are all that are required for consistency, but
+        # that's just asking for trouble if we start mixing representations.
+        elif dep.revision != target_dep.revision:
+            errs.append(
+                (['Inconsistent dependency for {0}:'.format(dep.name),
+                  'required: {0}'.format(target_dep.revision),
+                  'found: {0}'.format(dep.revision)],
+                 dep_chain))
+
         else:
-            errs.extend(
-                check_subdeps(dep_chain, dep.name, cur_repo_path, targets))
+            dep_hash, hash_err = get_rev_hash_from_repo(
+                dep.revision, dep_abs_path)
+            if not dep_hash:
+                err_msg = gen_bad_revision_err_str(
+                    dep.name, dep.revision, hash_err)
+                errs.append((errs, dep_chain))
+
+            else:
+                # If we got here, this dependency's revision is ok. Now gotta
+                # check its sub-deps.
+                subdep_errs = check_subdeps_for_repo(
+                    dep_chain, dep.name, dep_abs_path, targets)
+                errs.extend(subdep_errs)
 
     return errs
 
-def check_subdeps(dep_chain, repo_name, repo_full_path, targets):
-    new_dep_chain = dep_chain + [repo_full_path]
+# Check the subdependencies for the specified repo against the targets.
+def check_subdeps_for_repo(dep_chain, repo_name, repo_abs_path, targets):
+    new_dep_chain = dep_chain + [repo_abs_path]
 
-    if repo_full_path in dep_chain:
+    # If the current repo path is already in the dependency chain, that means
+    # we must have a circular dependency, which is bad.
+    if repo_abs_path in dep_chain:
         return [('Circular reference detected', new_dep_chain)]
 
-    with DoInExistingDir(repo_full_path) as ctx:
+    with DoInExistingDir(repo_abs_path) as ctx:
         if ctx:
-            rept_deps_file = open_rept_dep_file()
+            # This is guaranteed to succeed because we verified it in
+            # check_subdeps().
+            target_dep = targets.get(repo_abs_path)
 
-            # no .rept_deps file? No prob. Just means no conflicts.
-            if not rept_deps_file:
+            # Look for the contents of a .rept_deps file at the specified
+            # revision so see if we need to keep doing consistency checks.
+            rept_deps_contents = get_file_contents(
+                target_dep.revision, '.rept_deps')
+
+            # No .rept_deps file? No prob. Just means no conflicts.
+            # Treat an empty file and no file as the same thing.
+            if not rept_deps_contents:
                 return []
 
-            try:
-                dependencies, err = get_dependency_data_from_file(rept_deps_file)
-                if dependencies == None: # test for None since [] is allowed
-                    return [(err, new_dep_chain)]
-                return do_check_subdeps(new_dep_chain, dependencies, targets)
-            finally:
-                rept_deps_file.close()
+            dependencies, err = parse_dependency_data(rept_deps_contents)
+
+            # If the dependencies couldn't be parsed, we can't continue down
+            # this chain, so err out.
+            if dependencies == None: # test for None since [] is allowed
+                return [(err, new_dep_chain)]
+
+            # Now we can check all of the sub-dependencies of this dependency.
+            return check_subdeps(new_dep_chain, dependencies, targets)
+
         else:
             return [('Missing repo: {0}'.format(repo_name), new_dep_chain)]
 
 def do_check_dep_consistency(dependencies):
-    errs = []
-    dep_chain_so_far = [os.getcwd()]
-
-    target_list = []
-    target_dict = {}
+    target_deps = {}
     for dep in dependencies:
         repo_path = os.path.abspath(dep.path)
-        target_rev_hash, hash_err = get_rev_hash_from_repo(
-            dep.revision, repo_path)
-        if target_rev_hash:
-            target_dep = TargetDep(dep, repo_path, target_rev_hash)
-            target_list.append(target_dep)
-            target_dict[repo_path] = target_dep
-        else:
-            errs.append(gen_chkdeps_bad_revision_err(
-                dep.name, dep.revision, hash_err, dep_chain_so_far))
+        target_deps[repo_path] = dep
 
-    for target in target_list:
-        errs.extend(
-            check_subdeps(dep_chain_so_far, dep.name, target.full_path,
-                target_dict))
+    # Check each dependency for consistency with the targets.
+    errs = check_subdeps([os.getcwd()], dependencies, target_deps)
 
     for err in errs:
         dep_chain = [os.path.basename(dirname) for dirname in err[1]]
@@ -890,6 +888,10 @@ def cmd_check_dep(dependencies, args):
 
 ################################################################################
 # prune cmd funcs
+#
+# The "prune" command removes all remote branches from all repos on which the
+# currently checked out revision of the current repo depend.
+# i.e. 'git remote prune <remote>' is called for all dependent repos.
 ################################################################################
 
 def print_prune_usage():
@@ -928,6 +930,10 @@ def cmd_prune(dependencies, local_config, args):
 
 ################################################################################
 # fetch cmd funcs
+#
+# The "fetch" command fetches all repos on which the currently checked out
+# revision of the current repo depend. i.e. 'git fetch <remote>' is called for
+# all dependent repos.
 ################################################################################
 
 def print_fetch_usage():
@@ -966,6 +972,11 @@ def cmd_fetch(dependencies, local_config, args):
 
 ################################################################################
 # sync cmd funcs
+#
+# The "sync" command is used to get all code that the currently checked out
+# revision of a repo needs to build. All repos on which the main repo depends
+# are pulled fetched or cloned as needed, and the specific revisions of those
+# repos are checked out.
 ################################################################################
 
 def print_sync_usage():
@@ -982,8 +993,6 @@ def cmd_sync(dependencies, args):
     errs = []
 
     for dep in dependencies:
-        print('updating repo {0}...'.format(dep.name))
-
         repo_path = os.path.abspath(dep.path)
 
         # If the dir doesn't exist, it needs to. If it does, this is a noop.
@@ -991,15 +1000,9 @@ def cmd_sync(dependencies, args):
 
         with DoInExistingDir(repo_path) as ctx:
             if ctx:
-                # Already a .git dir? Do a fetch.
-                if (os.path.isdir('.git')):
-                    ret = subprocess.call(['git', 'fetch', dep.remote])
-                    if (ret):
-                        errs.append(
-                            'cannot sync "{0}": '
-                            'fetch failed'.format(dep.path))
-                # No .git dir. Do a clone.
-                else:
+                # Empty dir? If so, do a clone.
+                if not os.listdir():
+                    print('cloning repo {0}...'.format(dep.name))
                     full_remote_repo_name = dep.remote_server + dep.name
                     ret = subprocess.call(
                         ['git', 'clone', '-o', dep.remote,
@@ -1008,9 +1011,24 @@ def cmd_sync(dependencies, args):
                         errs.append(
                             'cannot sync "{0}": '
                             'fetch failed'.format(dep.path))
+                # Already a .git dir? If so, do a fetch.
+                elif (os.path.isdir('.git')):
+                    print('fetching repo {0}...'.format(dep.name))
+                    ret = subprocess.call(['git', 'fetch', dep.remote])
+                    if (ret):
+                        errs.append(
+                            'cannot sync "{0}": '
+                            'fetch failed'.format(dep.path))
+                else:
+                    errs.append(
+                        'cannot sync {0}: {1} is not empty '
+                        'and is not a git repo'.format(
+                            dep.name, dep.path))
+                # No .git dir. Do a clone.
             else:
                 errs.append(
-                    'cannot sync: cannot enter directory {0}'.format(dep.path))
+                    'cannot sync {0}: cannot enter directory {1}'.format(
+                        dep.name, dep.path))
 
     if errs:
         printerr('\n{0} errors:'.format(len(errs)))
@@ -1018,7 +1036,7 @@ def cmd_sync(dependencies, args):
             printerr('- ' + err)
         sys.exit(1)
 
-    if not check_dep_consistency(dependencies):
+    if not do_check_dep_consistency(dependencies):
         sys.exit(
             'error: inconsistent dependencies. cannot proceed with checkout')
 
