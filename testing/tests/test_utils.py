@@ -1,10 +1,28 @@
 import os
 import subprocess
+import sys
+
+################################################################################
+# Folder utils
+################################################################################
 
 top_testing_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 test_repos_home_dir = os.path.abspath(os.path.join(top_testing_dir, 'test_repos'))
 remotes_home_dir = os.path.join(test_repos_home_dir, 'remotes')
+locals_home_dir = os.path.join(test_repos_home_dir, 'locals')
+
+def get_local_repo_local_refs_dir(repo):
+    return os.path.join(
+        test_repos_home_dir, 'locals', repo, '.git', 'refs', 'heads')
+
+def get_local_repo_remote_refs_dir(repo):
+    return os.path.join(
+        test_repos_home_dir, 'locals', repo, '.git', 'refs', 'remotes', 'origin')
+
+################################################################################
+# Dependency utils
+################################################################################
 
 deps_template = """
 {{{{
@@ -37,7 +55,13 @@ def make_dependency(repo_name, rev):
 def make_no_deps():
     return deps_template.format('')
 
+################################################################################
+# Misc utils
+################################################################################
+
 def exec_proc(cmd):
+    sys.stdout.flush()
+    sys.stderr.flush()
     p = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,

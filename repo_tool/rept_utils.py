@@ -30,7 +30,7 @@ class DoInExistingDir(object):
 # General util funcs
 ################################################################################
 
-def printerr(s):
+def printerr(s=''):
     print(s, file=sys.stderr)
 
 def print_unknown_arg(param):
@@ -44,7 +44,11 @@ def print_std_err(err):
         for msg in err[1:]:
             printerr('  ' + msg)
 
-def print_std_err_list(errs):
+def print_std_err_list(errs, print_header=True):
+    if print_header:
+        printerr()
+        printerr('{0} errors:'.format(len(errs)))
+
     for err in errs:
         print_std_err(err)
 
@@ -62,15 +66,21 @@ def gen_bad_revision_err_str(dep_name, dep_revision, rev_hash_err):
             'for repo: {0}'.format(dep_name),
             rev_hash_err]
 
-def exec_proc(cmd):
-    p = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE)
-    out, err = p.communicate()
-    out = str(out,'utf-8').strip()
-    err = str(err,'utf-8').strip()
-    return p.returncode, out, err
+def exec_proc(cmd, redirect=True):
+    sys.stdout.flush()
+    sys.stderr.flush()
+
+    if redirect:
+        p = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        out, err = p.communicate()
+        out = str(out,'utf-8').strip()
+        err = str(err,'utf-8').strip()
+        return p.returncode, out, err
+    else:
+        return subprocess.call(cmd)
 
 ################################################################################
 # dependency and config funcs

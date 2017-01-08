@@ -6,7 +6,6 @@
 # i.e. 'git remote prune <remote>' is called for all dependent repos.
 ################################################################################
 
-import subprocess
 import sys
 
 from repo_tool import rept_utils
@@ -26,7 +25,8 @@ def cmd_prune(dependencies, local_config, args):
     errs = []
 
     print('pruning {0} for this repo...'.format(local_config.remote))
-    ret = subprocess.call(['git', 'remote', 'prune', local_config.remote])
+    ret = rept_utils.exec_proc(
+        ['git', 'remote', 'prune', local_config.remote], False)
     if (ret):
         errs.append(
             "error: cannot prune '{0}' for this repo".format(local_config.remote))
@@ -35,10 +35,11 @@ def cmd_prune(dependencies, local_config, args):
         print('pruning {0}...'.format(dep.name))
         with rept_utils.DoInExistingDir(dep.path) as ctx:
             if ctx:
-                ret = subprocess.call(['git', 'remote', 'prune', dep.remote])
+                ret = rept_utils.exec_proc(
+                    ['git', 'remote', 'prune', dep.remote], False)
                 if (ret):
                     errs.append(
-                        "error: cannot prune repo '{0}': ".format(dep.name))
+                        "error: cannot prune repo '{0}'".format(dep.name))
             else:
                 errs.append('Missing repo: {0}'.format(dep.path))
 

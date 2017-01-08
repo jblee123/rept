@@ -6,7 +6,6 @@
 # all dependent repos.
 ################################################################################
 
-import subprocess
 import sys
 
 from repo_tool import rept_utils
@@ -26,7 +25,7 @@ def cmd_fetch(dependencies, local_config, args):
     errs = []
 
     print('fetching {0} for this repo...'.format(local_config.remote))
-    ret = subprocess.call(['git', 'fetch', local_config.remote])
+    ret = rept_utils.exec_proc(['git', 'fetch', local_config.remote], False)
     if (ret):
         errs.append(
             "error: cannot fetch '{0}' for this repo".format(local_config.remote))
@@ -35,7 +34,7 @@ def cmd_fetch(dependencies, local_config, args):
         print('fetching {0}...'.format(dep.name))
         with rept_utils.DoInExistingDir(dep.path) as ctx:
             if ctx:
-                ret = subprocess.call(['git', 'fetch', dep.remote])
+                ret = rept_utils.exec_proc(['git', 'fetch', dep.remote], False)
                 if (ret):
                     errs.append(
                         "error: cannot fetch repo '{0}'".format(dep.name))

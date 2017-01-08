@@ -17,6 +17,25 @@ rept_deps_build_data = [
     {
         'test_repo_app': make_app_deps,
     },
+    {
+    },
+]
+
+app_local_refs_dir = test_utils.get_local_repo_local_refs_dir('test_repo_app')
+dep1_local_refs_dir = test_utils.get_local_repo_local_refs_dir('test_repo_dep1')
+dep2_local_refs_dir = test_utils.get_local_repo_local_refs_dir('test_repo_dep2')
+dep3_local_refs_dir = test_utils.get_local_repo_local_refs_dir('test_repo_dep3')
+
+app_remote_refs_dir = test_utils.get_local_repo_remote_refs_dir('test_repo_app')
+dep1_remote_refs_dir = test_utils.get_local_repo_remote_refs_dir('test_repo_dep1')
+dep2_remote_refs_dir = test_utils.get_local_repo_remote_refs_dir('test_repo_dep2')
+dep3_remote_refs_dir = test_utils.get_local_repo_remote_refs_dir('test_repo_dep3')
+
+repo_info_list = [
+    ('test_repo_app', app_local_refs_dir, app_remote_refs_dir),
+    ('test_repo_dep1', dep1_local_refs_dir, dep1_remote_refs_dir),
+    ('test_repo_dep2', dep2_local_refs_dir, dep2_remote_refs_dir),
+    ('test_repo_dep3', dep3_local_refs_dir, dep3_remote_refs_dir),
 ]
 
 class FetchTestCase(unittest.TestCase):
@@ -27,37 +46,32 @@ class FetchTestCase(unittest.TestCase):
 
         rept_deps_filename = '.rept_deps'
 
-        base_remote_dir = os.path.join(test_utils.test_repos_home_dir, 'remotes')
-        base_local_dir = os.path.join(test_utils.test_repos_home_dir, 'locals')
-        repo_dirs = [
-            'test_repo_app',
-            'test_repo_dep1',
-            'test_repo_dep2',
-            'test_repo_dep3',
-        ]
-
         # Create 4 bare repos to act as remotes.
-        remote_dirs = [os.path.join(base_remote_dir, repo_dir) for repo_dir in repo_dirs]
+        remote_dirs = [os.path.join(test_utils.remotes_home_dir, repo_info[0])
+            for repo_info in repo_info_list]
         for remote_dir in remote_dirs:
             os.makedirs(remote_dir)
             os.chdir(remote_dir)
             test_utils.exec_proc(['git', 'init', '-q', '--bare'])
             os.chdir(test_utils.top_testing_dir)
 
+        self.commits = {}
+
         # Create 4 local repos and push them up to the remotes.
-        local_dirs = [os.path.join(base_local_dir, repo_dir) for repo_dir in repo_dirs]
-        for local_dir in local_dirs:
+        for repo_name, local_refs_dir, remote_refs_dir in repo_info_list:
+            local_dir = os.path.join(test_utils.locals_home_dir, repo_name)
             os.makedirs(local_dir)
             os.chdir(local_dir)
-            repo_name = os.path.basename(local_dir)
             prefix = repo_name
             test_utils.exec_proc(['git', 'init', '-q'])
 
             remote_name = os.path.join(test_utils.remotes_home_dir, repo_name)
             test_utils.exec_proc(['git', 'remote', 'add', 'origin', remote_name])
 
+            self.commits[repo_name] = []
+
             branches = ['master']
-            for i in range(0, 1):
+            for i in range(0, 2):
                 files_to_add = [prefix]
                 f = open(prefix, 'w')
                 f.write('{0} v{1}'.format(prefix, i + 1))
@@ -76,20 +90,45 @@ class FetchTestCase(unittest.TestCase):
                 msg = 'v{0}'.format(i + 1)
                 test_utils.exec_proc(['git', 'commit', '-q', '-m', msg])
 
+                d = os.getcwd()
+                os.chdir(local_refs_dir)
+                ref_file = open('master')
+                self.commits[repo_name].append(ref_file.read())
+                ref_file.close()
+                os.chdir(d)
+
             test_utils.exec_proc(['git', 'push', '-q', 'origin'] + branches)
+
+            os.chdir(local_refs_dir)
+            ref_file = open('master', 'w')
+            ref_file.write(self.commits[repo_name][0])
+            ref_file.close()
+
+            os.chdir(remote_refs_dir)
+            ref_file = open('master', 'w')
+            ref_file.write(self.commits[repo_name][0])
+            ref_file.close()
+
+            os.chdir(local_dir)
+            out, err, ret = test_utils.exec_proc(
+                ['git', 'reset', '--hard', 'HEAD'])
+            if ret:
+                print(out)
+                print(err)
 
             os.chdir(test_utils.top_testing_dir)
 
-        os.chdir(base_local_dir)
+        os.chdir(test_utils.locals_home_dir)
 
     def tearDown(self):
         os.chdir(test_utils.top_testing_dir)
         shutil.rmtree('test_repos')
 
     def test_fetch_1_success(self):
+        app1_dir = os.path.abspath('test_repo_app')
+
         try:
             out, err = '', ''
-            app1_dir = os.path.abspath('test_repo_app')
             os.chdir(app1_dir)
 
             out, err, ret = test_utils.exec_proc(['rept', 'fetch'])
@@ -102,6 +141,21 @@ class FetchTestCase(unittest.TestCase):
                 'fetching test_repo_dep2...',
                 'fetching test_repo_dep3...',
                 ])
+
+            # Make sure the branches are where they're supposed to be.
+            for repo_name, local_refs_dir, remote_refs_dir in repo_info_list:
+                os.chdir(local_refs_dir)
+                ref_file = open('master')
+                commit = ref_file.read()
+                ref_file.close()
+                self.assertEqual(commit, self.commits[repo_name][0])
+
+                os.chdir(remote_refs_dir)
+                ref_file = open('master')
+                commit = ref_file.read()
+                ref_file.close()
+                self.assertEqual(commit, self.commits[repo_name][1])
+
         except:
             test_utils.print_out_err(out, err)
             raise
@@ -137,8 +191,10 @@ class FetchTestCase(unittest.TestCase):
                 'fetching test_repo_dep3...',
                 ])
             self.assertEqual(
-                test_utils.convert_to_lines(err)[-3:],
+                test_utils.convert_to_lines(err)[-5:],
                 [
+                "",
+                "3 errors:",
                 "error: cannot fetch 'origin' for this repo",
                 "Missing repo: ../test_repo_dep1",
                 "error: cannot fetch repo 'test_repo_dep2'",

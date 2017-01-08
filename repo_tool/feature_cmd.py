@@ -4,7 +4,6 @@
 
 import collections
 import os
-import subprocess
 import sys
 
 from repo_tool import git_utils
@@ -75,7 +74,7 @@ def create_feature(dependencies, feat_args):
 
     created_branches = 0
 
-    ret = subprocess.call(['git', 'branch', '-q', feat_args.name])
+    ret = rept_utils.exec_proc(['git', 'branch', '-q', feat_args.name], False)
     if (not ret):
         created_branches += 1
     else:
@@ -86,8 +85,8 @@ def create_feature(dependencies, feat_args):
         repo_path = os.path.abspath(dep.path)
         with rept_utils.DoInExistingDir(repo_path) as ctx:
             if ctx:
-                ret = subprocess.call(
-                    ['git', 'branch', '-q', feat_args.name, dep.revision])
+                ret = rept_utils.exec_proc(
+                    ['git', 'branch', '-q', feat_args.name, dep.revision], False)
                 if (not ret):
                     created_branches += 1
                 else:
@@ -120,7 +119,7 @@ def get_feature_branch_state(branch_name, remote_name):
 def delete_feature_branch(dep, del_cmd, fail_list, errs):
     success = False
     if not dep:
-        ret = subprocess.call(del_cmd)
+        ret = rept_utils.exec_proc(del_cmd, False)
         if (not ret):
             success = True
         else:
@@ -129,7 +128,7 @@ def delete_feature_branch(dep, del_cmd, fail_list, errs):
         repo_path = os.path.abspath(dep.path)
         with rept_utils.DoInExistingDir(repo_path) as ctx:
             if ctx:
-                ret = subprocess.call(del_cmd)
+                ret = rept_utils.exec_proc(del_cmd, False)
                 if (not ret):
                     success = True
                 else:

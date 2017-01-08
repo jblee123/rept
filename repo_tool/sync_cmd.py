@@ -8,7 +8,6 @@
 ################################################################################
 
 import os
-import subprocess
 import sys
 
 from repo_tool import check_deps_cmd
@@ -40,9 +39,9 @@ def cmd_sync(dependencies, args):
                 if not os.listdir():
                     print('cloning repo {0}...'.format(dep.name))
                     full_remote_repo_name = dep.remote_server + dep.name
-                    ret = subprocess.call(
+                    ret = rept_utils.exec_proc(
                         ['git', 'clone', '-o', dep.remote,
-                         full_remote_repo_name, '.'])
+                         full_remote_repo_name, '.'], False)
                     if (ret):
                         errs.append(
                             'cannot sync "{0}": '
@@ -50,7 +49,8 @@ def cmd_sync(dependencies, args):
                 # Already a .git dir? If so, do a fetch.
                 elif (os.path.isdir('.git')):
                     print('fetching repo {0}...'.format(dep.name))
-                    ret = subprocess.call(['git', 'fetch', dep.remote])
+                    ret = rept_utils.exec_proc(
+                        ['git', 'fetch', dep.remote], False)
                     if (ret):
                         errs.append(
                             'cannot sync "{0}": '
@@ -81,8 +81,8 @@ def cmd_sync(dependencies, args):
         repo_path = os.path.abspath(dep.path)
         with rept_utils.DoInExistingDir(repo_path) as ctx:
             if ctx:
-                ret = subprocess.call(
-                    ['git', 'checkout', '-q', dep.revision])
+                ret = rept_utils.exec_proc(
+                    ['git', 'checkout', '-q', dep.revision], False)
                 if ret:
                     errs.append(
                         'cannot check out rev {0} for repo: {1}'.

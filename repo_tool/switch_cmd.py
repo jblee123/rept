@@ -4,7 +4,6 @@
 
 import collections
 import os
-import subprocess
 import sys
 
 from repo_tool import git_utils
@@ -122,7 +121,7 @@ def cmd_switch(dependencies, local_config, args):
         sys.exit(1)
 
     def do_switch_checkout(rev, dep_path):
-        ret = subprocess.call(['git', 'checkout', '-q', rev])
+        ret = rept_utils.exec_proc(['git', 'checkout', '-q', rev], False)
         if ret:
             repo_part = 'repo: {0}'.format(dep_path) if dep_path else 'this repo'
             errs.append(
