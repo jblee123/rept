@@ -38,7 +38,7 @@ def cmd_fetch(dependencies, local_config, args):
                 ret = subprocess.call(['git', 'fetch', dep.remote])
                 if (ret):
                     errs.append(
-                        "error: cannot fetch repo '{0}': ".format(dep.name))
+                        "error: cannot fetch repo '{0}'".format(dep.name))
             else:
                 errs.append('Missing repo: {0}'.format(dep.path))
 

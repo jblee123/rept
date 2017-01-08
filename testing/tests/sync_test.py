@@ -1,60 +1,27 @@
 import os
 import shutil
-import subprocess
 import unittest
 
-test_repos_home_dir = os.path.abspath(os.path.join('..', 'test_repos'))
-remotes_home_dir = os.path.join(test_repos_home_dir, 'remotes')
-
-deps_template = """
-{{{{
-    "defaults": {{{{
-        "remote": "origin",
-        "remote_server": "{0}{1}",
-        "revision": "origin/master"
-    }}}},
-    "dependencies": [
-{{0}}
-    ]
-}}}}
-""".format(remotes_home_dir, os.path.sep)
-
-dependency_template = """
-        {{
-            "name": "{0}",
-            "path": "../{0}",
-{1}
-        }},
-"""
-
-def make_dependency(repo_name, rev):
-    if rev:
-        rev = '            "revision": "{0}"'.format(rev)
-
-    return dependency_template.format(repo_name, rev)
-
-# No deps
-def make_no_deps():
-    return deps_template.format('')
+import test_utils
 
 # Consistent deps.
 # app -> dep1:b2, dep2:b1, dep3
 # dep1:b2 -> dep2:b1
 def make_app_branch2_deps():
     deps = [
-        make_dependency('test_repo_dep1', 'origin/branch2'),
-        make_dependency('test_repo_dep2', 'origin/branch1'),
-        make_dependency('test_repo_dep3', ''),
+        test_utils.make_dependency('test_repo_dep1', 'origin/branch2'),
+        test_utils.make_dependency('test_repo_dep2', 'origin/branch1'),
+        test_utils.make_dependency('test_repo_dep3', ''),
     ]
     deps = ''.join(deps)
-    return deps_template.format(deps)
+    return test_utils.deps_template.format(deps)
 
 def make_dep1_branch2_deps():
     deps = [
-        make_dependency('test_repo_dep2', 'origin/branch1'),
+        test_utils.make_dependency('test_repo_dep2', 'origin/branch1'),
     ]
     deps = ''.join(deps)
-    return deps_template.format(deps)
+    return test_utils.deps_template.format(deps)
 
 # Inconsistent deps. Update the app dependencies, but keep dep1 dependencies
 # as-is.
@@ -62,19 +29,19 @@ def make_dep1_branch2_deps():
 # dep1:b2 -> dep2:b1
 def make_app_branch3_deps():
     deps = [
-        make_dependency('test_repo_dep1', 'origin/branch2'),
-        make_dependency('test_repo_dep2', 'origin/branch2'),
-        make_dependency('test_repo_dep3', ''),
+        test_utils.make_dependency('test_repo_dep1', 'origin/branch2'),
+        test_utils.make_dependency('test_repo_dep2', 'origin/branch2'),
+        test_utils.make_dependency('test_repo_dep3', ''),
     ]
     deps = ''.join(deps)
-    return deps_template.format(deps)
+    return test_utils.deps_template.format(deps)
 
 rept_deps_build_data = [
     # branch1
     # No deps are set. The app is given a .rept_deps file, but its dependencies
     # are empty.
     {
-        'test_repo_app': make_no_deps,
+        'test_repo_app': test_utils.make_no_deps,
     },
     # branch2
     # Update the app to be dependent on dep1/branch2, dep2/branch1, and dep3.
@@ -94,40 +61,15 @@ rept_deps_build_data = [
     },
 ]
 
-def exec_proc(cmd):
-    p = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE)
-    out, err = p.communicate()
-    out = str(out,'utf-8').strip()
-    err = str(err,'utf-8').strip()
-    return out, err, p.returncode
-
-def convert_to_lines(s):
-    return [line for line in s.split(os.linesep)]
-
-def print_out_err(out, err):
-    if out:
-        print()
-        print('out:')
-        print(out)
-
-    if err:
-        print()
-        print('err:')
-        print(err)
-
 class SyncTestCase(unittest.TestCase):
     def setUp(self):
-        os.chdir('..')
+        os.chdir(test_utils.top_testing_dir)
         shutil.rmtree('test_repos', ignore_errors=True)
-        self.top_dir = os.path.abspath('.')
 
         rept_deps_filename = '.rept_deps'
 
-        base_remote_dir = os.path.join(test_repos_home_dir, 'remotes')
-        base_local1_dir = os.path.join(test_repos_home_dir, 'locals1')
+        base_remote_dir = os.path.join(test_utils.test_repos_home_dir, 'remotes')
+        base_local1_dir = os.path.join(test_utils.test_repos_home_dir, 'locals1')
         repo_dirs = [
             'test_repo_app',
             'test_repo_dep1',
@@ -140,8 +82,8 @@ class SyncTestCase(unittest.TestCase):
         for remote_dir in remote_dirs:
             os.makedirs(remote_dir)
             os.chdir(remote_dir)
-            subprocess.Popen(['git', 'init', '-q', '--bare']).wait()
-            os.chdir(self.top_dir)
+            test_utils.exec_proc(['git', 'init', '-q', '--bare'])
+            os.chdir(test_utils.top_testing_dir)
 
         # Create 4 local repos and push them up to the remotes.
         local1_dirs = [os.path.join(base_local1_dir, repo_dir) for repo_dir in repo_dirs]
@@ -150,10 +92,10 @@ class SyncTestCase(unittest.TestCase):
             os.chdir(local1_dir)
             repo_name = os.path.basename(local1_dir)
             prefix = repo_name
-            subprocess.Popen(['git', 'init', '-q']).wait()
+            test_utils.exec_proc(['git', 'init', '-q'])
 
-            remote_name = os.path.join(remotes_home_dir, repo_name)
-            subprocess.Popen(['git', 'remote', 'add', 'origin', remote_name]).wait()
+            remote_name = os.path.join(test_utils.remotes_home_dir, repo_name)
+            test_utils.exec_proc(['git', 'remote', 'add', 'origin', remote_name])
 
             branches = ['master']
             for i in range(0, 3):
@@ -170,36 +112,36 @@ class SyncTestCase(unittest.TestCase):
                     f.close()
                     files_to_add.append(rept_deps_filename)
 
-                subprocess.Popen(['git', 'add'] + files_to_add).wait()
+                test_utils.exec_proc(['git', 'add'] + files_to_add)
 
                 msg = 'v{0}'.format(i + 1)
-                subprocess.Popen(['git', 'commit', '-q', '-m', msg]).wait()
+                test_utils.exec_proc(['git', 'commit', '-q', '-m', msg])
                 branch_name = 'branch{0}'.format(i + 1)
-                subprocess.Popen(['git', 'branch', '-q', branch_name]).wait()
+                test_utils.exec_proc(['git', 'branch', '-q', branch_name])
                 branches.append(branch_name)
 
-            subprocess.Popen(['git', 'push', '-q', 'origin'] + branches).wait()
+            test_utils.exec_proc(['git', 'push', '-q', 'origin'] + branches)
 
-            os.chdir(self.top_dir)
+            os.chdir(test_utils.top_testing_dir)
 
-        base_local2_dir = os.path.join(test_repos_home_dir, 'locals2')
+        base_local2_dir = os.path.join(test_utils.test_repos_home_dir, 'locals2')
         os.makedirs(base_local2_dir)
         os.chdir(base_local2_dir)
 
     def tearDown(self):
-        os.chdir(self.top_dir)
+        os.chdir(test_utils.top_testing_dir)
         shutil.rmtree('test_repos')
 
     def test_sync1(self):
 
-        test_repo_app_dir = os.path.join(remotes_home_dir, 'test_repo_app')
+        test_repo_app_dir = os.path.join(test_utils.remotes_home_dir, 'test_repo_app')
 
         app1_dir = os.path.abspath('test_repo_app')
         dep1_dir = os.path.abspath('test_repo_dep1')
         dep2_dir = os.path.abspath('test_repo_dep2')
         dep3_dir = os.path.abspath('test_repo_dep3')
 
-        out, err, ret = exec_proc(['git', 'clone', test_repo_app_dir])
+        out, err, ret = test_utils.exec_proc(['git', 'clone', test_repo_app_dir])
         self.assertEqual(ret, 0)
 
         def reset_for_next_test():
@@ -212,10 +154,10 @@ class SyncTestCase(unittest.TestCase):
             try:
                 out, err = '', ''
                 os.chdir(app1_dir)
-                out, err, ret= exec_proc(['git', 'checkout', 'branch1'])
+                out, err, ret= test_utils.exec_proc(['git', 'checkout', 'branch1'])
                 self.assertEqual(ret, 0)
 
-                out, err, ret = exec_proc(['rept', 'sync'])
+                out, err, ret = test_utils.exec_proc(['rept', 'sync'])
                 self.assertEqual(ret, 0)
                 self.assertEqual(out, 'Success')
 
@@ -223,7 +165,7 @@ class SyncTestCase(unittest.TestCase):
                 self.assertFalse(os.path.exists(dep2_dir))
                 self.assertFalse(os.path.exists(dep3_dir))
             except:
-                print_out_err(out, err)
+                test_utils.print_out_err(out, err)
                 raise
 
         reset_for_next_test()
@@ -240,15 +182,15 @@ class SyncTestCase(unittest.TestCase):
             try:
                 out, err = '', ''
                 os.chdir(app1_dir)
-                out, err, ret= exec_proc(['git', 'checkout', 'branch2'])
+                out, err, ret= test_utils.exec_proc(['git', 'checkout', 'branch2'])
                 self.assertEqual(ret, 0)
 
-                out, err, ret = exec_proc(['rept', 'sync'])
+                out, err, ret = test_utils.exec_proc(['rept', 'sync'])
                 # print('out: \n' + out)
                 # print('err: \n' + err)
                 self.assertEqual(ret, 0)
                 self.assertEqual(
-                    convert_to_lines(out),
+                    test_utils.convert_to_lines(out),
                     [
                     'cloning repo test_repo_dep1...',
                     'cloning repo test_repo_dep2...',
@@ -264,18 +206,18 @@ class SyncTestCase(unittest.TestCase):
                 self.assertTrue(os.path.exists(dep2_dir))
                 self.assertTrue(os.path.exists(dep3_dir))
             except:
-                print_out_err(out, err)
+                test_utils.print_out_err(out, err)
                 raise
 
             with self.subTest('sync consistent deps test (fetching)'):
                 try:
                     out, err = '', ''
-                    out, err, ret = exec_proc(['rept', 'sync'])
+                    out, err, ret = test_utils.exec_proc(['rept', 'sync'])
                     # print('out: \n' + out)
                     # print('err: \n' + err)
                     self.assertEqual(ret, 0)
                     self.assertEqual(
-                        convert_to_lines(out),
+                        test_utils.convert_to_lines(out),
                         [
                         'fetching repo test_repo_dep1...',
                         'fetching repo test_repo_dep2...',
@@ -287,32 +229,32 @@ class SyncTestCase(unittest.TestCase):
                         'Success',
                         ])
                 except:
-                    print_out_err(out, err)
+                    test_utils.print_out_err(out, err)
                     raise
 
             with self.subTest('sync consistent deps test (no dep1 .git folder)'):
                 try:
                     out, err = '', ''
                     shutil.rmtree(os.path.join(dep1_dir, '.git'))
-                    out, err, ret = exec_proc(['rept', 'sync'])
+                    out, err, ret = test_utils.exec_proc(['rept', 'sync'])
                     # print('out: \n' + out)
                     # print('err: \n' + err)
                     self.assertEqual(ret, 1)
                     self.assertEqual(
-                        convert_to_lines(out),
+                        test_utils.convert_to_lines(out),
                         [
                         'fetching repo test_repo_dep2...',
                         'fetching repo test_repo_dep3...',
                         ])
                     self.assertEqual(
-                        convert_to_lines(err),
+                        test_utils.convert_to_lines(err),
                         [
                         '1 errors:',
                         '- cannot sync test_repo_dep1: ../test_repo_dep1 is '
                             'not empty and is not a git repo',
                         ])
                 except:
-                    print_out_err(out, err)
+                    test_utils.print_out_err(out, err)
                     raise
 
         reset_for_next_test()
@@ -322,22 +264,22 @@ class SyncTestCase(unittest.TestCase):
             try:
                 out, err = '', ''
                 os.chdir(app1_dir)
-                out, err, ret= exec_proc(['git', 'checkout', 'branch3'])
+                out, err, ret= test_utils.exec_proc(['git', 'checkout', 'branch3'])
                 self.assertEqual(ret, 0)
 
-                out, err, ret = exec_proc(['rept', 'sync'])
+                out, err, ret = test_utils.exec_proc(['rept', 'sync'])
                 # print('out: \n' + out)
                 # print('err: \n' + err)
                 self.assertEqual(ret, 1)
                 self.assertEqual(
-                    convert_to_lines(out),
+                    test_utils.convert_to_lines(out),
                     [
                     'cloning repo test_repo_dep1...',
                     'cloning repo test_repo_dep2...',
                     'cloning repo test_repo_dep3...',
                     ])
                 self.assertEqual(
-                    convert_to_lines(err),
+                    test_utils.convert_to_lines(err),
                     [
                     "Cloning into '.'...",
                     "done.",
@@ -357,7 +299,7 @@ class SyncTestCase(unittest.TestCase):
                 self.assertTrue(os.path.exists(dep2_dir))
                 self.assertTrue(os.path.exists(dep3_dir))
             except:
-                print_out_err(out, err)
+                test_utils.print_out_err(out, err)
                 raise
 
 if __name__ == '__main__':
