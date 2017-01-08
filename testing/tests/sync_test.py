@@ -107,6 +107,17 @@ def exec_proc(cmd):
 def convert_to_lines(s):
     return [line for line in s.split(os.linesep)]
 
+def print_out_err(out, err):
+    if out:
+        print()
+        print('out:')
+        print(out)
+
+    if err:
+        print()
+        print('err:')
+        print(err)
+
 class SyncTestCase(unittest.TestCase):
     def setUp(self):
         os.chdir('..')
@@ -198,17 +209,22 @@ class SyncTestCase(unittest.TestCase):
             shutil.rmtree(dep3_dir, ignore_errors=True)
 
         with self.subTest('sync no deps test'):
-            os.chdir(app1_dir)
-            out, err, ret= exec_proc(['git', 'checkout', 'branch1'])
-            self.assertEqual(ret, 0)
+            try:
+                out, err = '', ''
+                os.chdir(app1_dir)
+                out, err, ret= exec_proc(['git', 'checkout', 'branch1'])
+                self.assertEqual(ret, 0)
 
-            out, err, ret = exec_proc(['rept', 'sync'])
-            self.assertEqual(ret, 0)
-            self.assertEqual(out, 'Success')
+                out, err, ret = exec_proc(['rept', 'sync'])
+                self.assertEqual(ret, 0)
+                self.assertEqual(out, 'Success')
 
-            self.assertFalse(os.path.exists(dep1_dir))
-            self.assertFalse(os.path.exists(dep2_dir))
-            self.assertFalse(os.path.exists(dep3_dir))
+                self.assertFalse(os.path.exists(dep1_dir))
+                self.assertFalse(os.path.exists(dep2_dir))
+                self.assertFalse(os.path.exists(dep3_dir))
+            except:
+                print_out_err(out, err)
+                raise
 
         reset_for_next_test()
 
@@ -221,32 +237,12 @@ class SyncTestCase(unittest.TestCase):
         # These tests all build on each other, hence nesting them under the same
         # sub-test.
         with self.subTest('sync consistent deps test (cloning)'):
-            os.chdir(app1_dir)
-            out, err, ret= exec_proc(['git', 'checkout', 'branch2'])
-            self.assertEqual(ret, 0)
+            try:
+                out, err = '', ''
+                os.chdir(app1_dir)
+                out, err, ret= exec_proc(['git', 'checkout', 'branch2'])
+                self.assertEqual(ret, 0)
 
-            out, err, ret = exec_proc(['rept', 'sync'])
-            # print('out: \n' + out)
-            # print('err: \n' + err)
-            self.assertEqual(ret, 0)
-            self.assertEqual(
-                convert_to_lines(out),
-                [
-                'cloning repo test_repo_dep1...',
-                'cloning repo test_repo_dep2...',
-                'cloning repo test_repo_dep3...',
-                'checking out origin/branch2 on test_repo_dep1...',
-                'checking out origin/branch1 on test_repo_dep2...',
-                'checking out origin/master on test_repo_dep3...',
-                '',
-                'Success',
-                ])
-
-            self.assertTrue(os.path.exists(dep1_dir))
-            self.assertTrue(os.path.exists(dep2_dir))
-            self.assertTrue(os.path.exists(dep3_dir))
-
-            with self.subTest('sync consistent deps test (fetching)'):
                 out, err, ret = exec_proc(['rept', 'sync'])
                 # print('out: \n' + out)
                 # print('err: \n' + err)
@@ -254,9 +250,9 @@ class SyncTestCase(unittest.TestCase):
                 self.assertEqual(
                     convert_to_lines(out),
                     [
-                    'fetching repo test_repo_dep1...',
-                    'fetching repo test_repo_dep2...',
-                    'fetching repo test_repo_dep3...',
+                    'cloning repo test_repo_dep1...',
+                    'cloning repo test_repo_dep2...',
+                    'cloning repo test_repo_dep3...',
                     'checking out origin/branch2 on test_repo_dep1...',
                     'checking out origin/branch1 on test_repo_dep2...',
                     'checking out origin/master on test_repo_dep3...',
@@ -264,8 +260,71 @@ class SyncTestCase(unittest.TestCase):
                     'Success',
                     ])
 
+                self.assertTrue(os.path.exists(dep1_dir))
+                self.assertTrue(os.path.exists(dep2_dir))
+                self.assertTrue(os.path.exists(dep3_dir))
+            except:
+                print_out_err(out, err)
+                raise
+
+            with self.subTest('sync consistent deps test (fetching)'):
+                try:
+                    out, err = '', ''
+                    out, err, ret = exec_proc(['rept', 'sync'])
+                    # print('out: \n' + out)
+                    # print('err: \n' + err)
+                    self.assertEqual(ret, 0)
+                    self.assertEqual(
+                        convert_to_lines(out),
+                        [
+                        'fetching repo test_repo_dep1...',
+                        'fetching repo test_repo_dep2...',
+                        'fetching repo test_repo_dep3...',
+                        'checking out origin/branch2 on test_repo_dep1...',
+                        'checking out origin/branch1 on test_repo_dep2...',
+                        'checking out origin/master on test_repo_dep3...',
+                        '',
+                        'Success',
+                        ])
+                except:
+                    print_out_err(out, err)
+                    raise
+
             with self.subTest('sync consistent deps test (no dep1 .git folder)'):
-                shutil.rmtree(os.path.join(dep1_dir, '.git'))
+                try:
+                    out, err = '', ''
+                    shutil.rmtree(os.path.join(dep1_dir, '.git'))
+                    out, err, ret = exec_proc(['rept', 'sync'])
+                    # print('out: \n' + out)
+                    # print('err: \n' + err)
+                    self.assertEqual(ret, 1)
+                    self.assertEqual(
+                        convert_to_lines(out),
+                        [
+                        'fetching repo test_repo_dep2...',
+                        'fetching repo test_repo_dep3...',
+                        ])
+                    self.assertEqual(
+                        convert_to_lines(err),
+                        [
+                        '1 errors:',
+                        '- cannot sync test_repo_dep1: ../test_repo_dep1 is '
+                            'not empty and is not a git repo',
+                        ])
+                except:
+                    print_out_err(out, err)
+                    raise
+
+        reset_for_next_test()
+
+        # Make sure we fail checking out on inconsistent dependencies.
+        with self.subTest('sync inconsistent deps test'):
+            try:
+                out, err = '', ''
+                os.chdir(app1_dir)
+                out, err, ret= exec_proc(['git', 'checkout', 'branch3'])
+                self.assertEqual(ret, 0)
+
                 out, err, ret = exec_proc(['rept', 'sync'])
                 # print('out: \n' + out)
                 # print('err: \n' + err)
@@ -273,56 +332,33 @@ class SyncTestCase(unittest.TestCase):
                 self.assertEqual(
                     convert_to_lines(out),
                     [
-                    'fetching repo test_repo_dep2...',
-                    'fetching repo test_repo_dep3...',
+                    'cloning repo test_repo_dep1...',
+                    'cloning repo test_repo_dep2...',
+                    'cloning repo test_repo_dep3...',
                     ])
                 self.assertEqual(
                     convert_to_lines(err),
                     [
-                    '1 errors:',
-                    '- cannot sync test_repo_dep1: ../test_repo_dep1 is '
-                        'not empty and is not a git repo',
+                    "Cloning into '.'...",
+                    "done.",
+                    "Cloning into '.'...",
+                    "done.",
+                    "Cloning into '.'...",
+                    "done.",
+                    "Inconsistent dependency for test_repo_dep2:",
+                    "  required: origin/branch2",
+                    "  found: origin/branch1",
+                    "  Detected in: test_repo_dep1",
+                    "    included by: test_repo_app",
+                    "error: inconsistent dependencies. cannot proceed with checkout",
                     ])
 
-        reset_for_next_test()
-
-        # Make sure we fail checking out on inconsistent dependencies.
-        with self.subTest('sync inconsistent deps test'):
-            os.chdir(app1_dir)
-            out, err, ret= exec_proc(['git', 'checkout', 'branch3'])
-            self.assertEqual(ret, 0)
-
-            out, err, ret = exec_proc(['rept', 'sync'])
-            # print('out: \n' + out)
-            # print('err: \n' + err)
-            self.assertEqual(ret, 1)
-            self.assertEqual(
-                convert_to_lines(out),
-                [
-                'cloning repo test_repo_dep1...',
-                'cloning repo test_repo_dep2...',
-                'cloning repo test_repo_dep3...',
-                ])
-            self.assertEqual(
-                convert_to_lines(err),
-                [
-                "Cloning into '.'...",
-                "done.",
-                "Cloning into '.'...",
-                "done.",
-                "Cloning into '.'...",
-                "done.",
-                "Inconsistent dependency for test_repo_dep2:",
-                "  required: origin/branch2",
-                "  found: origin/branch1",
-                "  Detected in: test_repo_dep1",
-                "    included by: test_repo_app",
-                "error: inconsistent dependencies. cannot proceed with checkout",
-                ])
-
-            self.assertTrue(os.path.exists(dep1_dir))
-            self.assertTrue(os.path.exists(dep2_dir))
-            self.assertTrue(os.path.exists(dep3_dir))
+                self.assertTrue(os.path.exists(dep1_dir))
+                self.assertTrue(os.path.exists(dep2_dir))
+                self.assertTrue(os.path.exists(dep3_dir))
+            except:
+                print_out_err(out, err)
+                raise
 
 if __name__ == '__main__':
     unittest.main()
