@@ -42,11 +42,7 @@ class PruneTestCase(unittest.TestCase):
 
         # Create 4 bare repos to act as remotes.
         remote_dirs = [os.path.join(base_remote_dir, repo_dir) for repo_dir in repo_dirs]
-        for remote_dir in remote_dirs:
-            os.makedirs(remote_dir)
-            os.chdir(remote_dir)
-            test_utils.exec_proc(['git', 'init', '-q', '--bare'])
-            os.chdir(test_utils.top_testing_dir)
+        test_utils.make_bare_repos(remote_dirs)
 
         # Create 4 local repos and push them up to the remotes.
         local_dirs = [os.path.join(base_local_dir, repo_dir) for repo_dir in repo_dirs]

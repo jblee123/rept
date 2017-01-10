@@ -75,12 +75,24 @@ def convert_to_lines(s):
     return [line for line in s.split(os.linesep)]
 
 def print_out_err(out, err):
+    print()
     if out:
-        print()
         print('out:')
         print(out)
+    else:
+        print('-- NOTHING SENT TO STDOUT --')
 
+    print()
     if err:
-        print()
         print('err:')
         print(err)
+    else:
+        print('-- NOTHING SENT TO STDERR --')
+
+def make_bare_repos(remote_dirs):
+    for remote_dir in remote_dirs:
+        orig_dir = os.getcwd()
+        os.makedirs(remote_dir)
+        os.chdir(remote_dir)
+        exec_proc(['git', 'init', '-q', '--bare'])
+        os.chdir(orig_dir)

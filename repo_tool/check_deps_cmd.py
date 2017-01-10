@@ -2,7 +2,7 @@
 # check-deps cmd funcs
 #
 # The "check-deps" command inspects the dependencies for consistency. While the
-# .rept_deps files lists all dpendencies directly (there are no implicitly
+# .rept_deps files lists all dependencies directly (there are no implicitly
 # inherited dependencies), conflicts are still possible. For instance, two
 # dependencies may each depend on different versions of a third dependency.
 ################################################################################
@@ -25,7 +25,7 @@ def check_subdeps(dep_chain, dependencies, targets):
         # So if this dep repo is NOT in the targets, then it's missing from the
         # main .rept_deps file, which is bad.
         if not target_dep:
-            err = "Unlisted dependency '{0}' found".format(repo_name)
+            err = "Unlisted dependency '{0}' found".format(dep.name)
             errs.append((err, dep_chain))
 
         # We're requiring that revision names, not just commits have to match.
@@ -44,7 +44,7 @@ def check_subdeps(dep_chain, dependencies, targets):
             if not dep_hash:
                 err_msg = rept_utils.gen_bad_revision_err_str(
                     dep.name, dep.revision, hash_err)
-                errs.append((errs, dep_chain))
+                errs.append((err_msg, dep_chain))
 
             else:
                 # If we got here, this dependency's revision is ok. Now gotta

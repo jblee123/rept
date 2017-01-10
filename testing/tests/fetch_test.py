@@ -49,11 +49,7 @@ class FetchTestCase(unittest.TestCase):
         # Create 4 bare repos to act as remotes.
         remote_dirs = [os.path.join(test_utils.remotes_home_dir, repo_info[0])
             for repo_info in repo_info_list]
-        for remote_dir in remote_dirs:
-            os.makedirs(remote_dir)
-            os.chdir(remote_dir)
-            test_utils.exec_proc(['git', 'init', '-q', '--bare'])
-            os.chdir(test_utils.top_testing_dir)
+        test_utils.make_bare_repos(remote_dirs)
 
         self.commits = {}
 

@@ -79,11 +79,7 @@ class SyncTestCase(unittest.TestCase):
 
         # Create 4 bare repos to act as remotes.
         remote_dirs = [os.path.join(base_remote_dir, repo_dir) for repo_dir in repo_dirs]
-        for remote_dir in remote_dirs:
-            os.makedirs(remote_dir)
-            os.chdir(remote_dir)
-            test_utils.exec_proc(['git', 'init', '-q', '--bare'])
-            os.chdir(test_utils.top_testing_dir)
+        test_utils.make_bare_repos(remote_dirs)
 
         # Create 4 local repos and push them up to the remotes.
         local1_dirs = [os.path.join(base_local1_dir, repo_dir) for repo_dir in repo_dirs]
@@ -132,7 +128,7 @@ class SyncTestCase(unittest.TestCase):
         os.chdir(test_utils.top_testing_dir)
         shutil.rmtree('test_repos')
 
-    def test_sync1(self):
+    def test_sync_1(self):
 
         test_repo_app_dir = os.path.join(test_utils.remotes_home_dir, 'test_repo_app')
 
@@ -154,7 +150,7 @@ class SyncTestCase(unittest.TestCase):
             try:
                 out, err = '', ''
                 os.chdir(app1_dir)
-                out, err, ret= test_utils.exec_proc(['git', 'checkout', 'branch1'])
+                out, err, ret = test_utils.exec_proc(['git', 'checkout', 'branch1'])
                 self.assertEqual(ret, 0)
 
                 out, err, ret = test_utils.exec_proc(['rept', 'sync'])
@@ -182,12 +178,10 @@ class SyncTestCase(unittest.TestCase):
             try:
                 out, err = '', ''
                 os.chdir(app1_dir)
-                out, err, ret= test_utils.exec_proc(['git', 'checkout', 'branch2'])
+                out, err, ret = test_utils.exec_proc(['git', 'checkout', 'branch2'])
                 self.assertEqual(ret, 0)
 
                 out, err, ret = test_utils.exec_proc(['rept', 'sync'])
-                # print('out: \n' + out)
-                # print('err: \n' + err)
                 self.assertEqual(ret, 0)
                 self.assertEqual(
                     test_utils.convert_to_lines(out),
@@ -213,8 +207,6 @@ class SyncTestCase(unittest.TestCase):
                 try:
                     out, err = '', ''
                     out, err, ret = test_utils.exec_proc(['rept', 'sync'])
-                    # print('out: \n' + out)
-                    # print('err: \n' + err)
                     self.assertEqual(ret, 0)
                     self.assertEqual(
                         test_utils.convert_to_lines(out),
@@ -237,8 +229,6 @@ class SyncTestCase(unittest.TestCase):
                     out, err = '', ''
                     shutil.rmtree(os.path.join(dep1_dir, '.git'))
                     out, err, ret = test_utils.exec_proc(['rept', 'sync'])
-                    # print('out: \n' + out)
-                    # print('err: \n' + err)
                     self.assertEqual(ret, 1)
                     self.assertEqual(
                         test_utils.convert_to_lines(out),
@@ -264,12 +254,10 @@ class SyncTestCase(unittest.TestCase):
             try:
                 out, err = '', ''
                 os.chdir(app1_dir)
-                out, err, ret= test_utils.exec_proc(['git', 'checkout', 'branch3'])
+                out, err, ret = test_utils.exec_proc(['git', 'checkout', 'branch3'])
                 self.assertEqual(ret, 0)
 
                 out, err, ret = test_utils.exec_proc(['rept', 'sync'])
-                # print('out: \n' + out)
-                # print('err: \n' + err)
                 self.assertEqual(ret, 1)
                 self.assertEqual(
                     test_utils.convert_to_lines(out),

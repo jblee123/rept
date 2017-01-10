@@ -117,7 +117,8 @@ def parse_local_data(rept_local_str):
         # Use literal_eval() for safety since we're eval'ing untrusted code.
         contents = ast.literal_eval(rept_local_str)
     except SyntaxError as e:
-        err = 'syntax error at line {0}, offset {1}'.format(e.lineno, e.offset)
+        err = "syntax error at line {0}, offset {1}: '{2}'".format(
+            e.lineno, e.offset, e.text.rstrip())
         return (None, err)
     except ValueError:
         err = 'illegal value used. (Do you have a function call in the file?)'
@@ -161,7 +162,8 @@ def parse_dependency_data(rept_deps_str):
         # Use literal_eval() for safety since we're eval'ing untrusted code.
         contents = ast.literal_eval(rept_deps_str)
     except SyntaxError as e:
-        err = 'syntax error at line {0}, offset {1}'.format(e.lineno, e.offset)
+        err = "syntax error at line {0}, offset {1}: '{2}'".format(
+            e.lineno, e.offset, e.text.rstrip())
         return (None, err)
     except ValueError:
         err = 'illegal value used. (Do you have a function call in the file?)'
