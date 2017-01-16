@@ -1,5 +1,19 @@
 ################################################################################
 # feature cmd funcs
+#
+# The "feature" command creates or deletes branches of the specified name across
+# all dependency repos. In the main repo, the branch will point to the currently
+# checked out commit, and the dependencies in the main repo's current working
+# space are used to determine the commits to which the new branches in the
+# dependency repos will refer.
+#
+# By default, deleting will delete all branches with the specified name in the
+# main and dependency repos. The -d and -D options cause equivalent deletion
+# behavior as git's "branch" command. That is, -d will fail if the branch is
+# unmerged with the currently checked out branch, and -D will force deletion.
+# If deleting, --push will additionally cause the deletions to be pushed to the
+# remote, and --push-only will only push the deletion to the remote but will
+# not delete the local branches.
 ################################################################################
 
 import collections
@@ -13,7 +27,7 @@ FeatureArgs = collections.namedtuple('FeatureArgs',
     'name delete force push push_only')
 
 FeatureBranchState = collections.namedtuple('FeatureBranchState',
-    'exists is_current has_remote remote_is_current is_merged')
+    'exists is_current has_remote is_merged')
 
 def can_create_feature_branch(branch_name, remote_name, dep_name, errs):
     if dep_name:
@@ -110,11 +124,10 @@ def get_feature_branch_state(branch_name, remote_name):
     exists = git_utils.get_branch_exists(branch_name)
     is_current = git_utils.is_current_branch(branch_name)
     has_remote = git_utils.get_branch_exists(remote_branch_name)
-    remote_is_current = git_utils.is_current_branch(remote_branch_name)
     is_merged = git_utils.is_branch_merged(branch_name)
 
     return FeatureBranchState(
-        exists, is_current, has_remote, remote_is_current, is_merged)
+        exists, is_current, has_remote, is_merged)
 
 def delete_feature_branch(dep, del_cmd, fail_list, errs):
     success = False
@@ -159,11 +172,11 @@ def delete_feature(dependencies, local_config, feat_args):
         sys.exit(1)
 
     exists = [state for state in branch_states if state[1].exists]
-    are_current = [state for state in branch_states if state[1].is_current]
+    are_current = [state for state in branch_states
+        if state[1].exists and state[1].is_current]
     has_remote = [state for state in branch_states if state[1].has_remote]
-    remotes_are_current = [
-        state for state in branch_states if state[1].remote_is_current]
-    unmerged = [state for state in branch_states if not state[1].is_merged]
+    unmerged = [state for state in branch_states
+        if state[1].exists and not state[1].is_merged]
 
     def print_bad_repos(branch_states):
         for dep, state in branch_states:
@@ -174,12 +187,6 @@ def delete_feature(dependencies, local_config, feat_args):
         rept_utils.printerr(
             'error: cannot delete branches checked out in repos:')
         print_bad_repos(are_current)
-        sys.exit(1)
-
-    if remotes_are_current and (feat_args.push or feat_args.push_only):
-        rept_utils.printerr(
-            'error: cannot delete remote branches checked out in repos:')
-        print_bad_repos(remotes_are_current)
         sys.exit(1)
 
     if unmerged and not feat_args.force and not feat_args.push_only:
