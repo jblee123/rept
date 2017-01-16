@@ -66,11 +66,9 @@ class SyncTestCase(unittest.TestCase):
         os.chdir(test_utils.top_testing_dir)
         shutil.rmtree('test_repos', ignore_errors=True)
 
-        rept_deps_filename = '.rept_deps'
-
         base_remote_dir = os.path.join(test_utils.test_repos_home_dir, 'remotes')
-        base_local1_dir = os.path.join(test_utils.test_repos_home_dir, 'locals1')
-        repo_dirs = [
+        base_local_dir = os.path.join(test_utils.test_repos_home_dir, 'locals')
+        repo_names = [
             'test_repo_app',
             'test_repo_dep1',
             'test_repo_dep2',
@@ -78,45 +76,24 @@ class SyncTestCase(unittest.TestCase):
         ]
 
         # Create 4 bare repos to act as remotes.
-        remote_dirs = [os.path.join(base_remote_dir, repo_dir) for repo_dir in repo_dirs]
-        test_utils.make_bare_repos(remote_dirs)
+        test_utils.init_remotes(repo_names)
 
         # Create 4 local repos and push them up to the remotes.
-        local1_dirs = [os.path.join(base_local1_dir, repo_dir) for repo_dir in repo_dirs]
-        for local1_dir in local1_dirs:
-            os.makedirs(local1_dir)
-            os.chdir(local1_dir)
-            repo_name = os.path.basename(local1_dir)
-            prefix = repo_name
-            test_utils.exec_proc(['git', 'init', '-q'])
+        for repo_name in repo_names:
+            local_dir = os.path.join(base_local_dir, repo_name)
+            test_utils.init_repo(local_dir)
 
-            remote_name = os.path.join(test_utils.remotes_home_dir, repo_name)
-            test_utils.exec_proc(['git', 'remote', 'add', 'origin', remote_name])
+            test_utils.add_remote(repo_name)
 
             branches = ['master']
-            for i in range(0, 3):
-                files_to_add = [prefix]
-                f = open(prefix, 'w')
-                f.write('{0} v{1}'.format(prefix, i + 1))
-                f.close()
+            for i in range(0, len(rept_deps_build_data)):
+                test_utils.commit_common_files(repo_name, i, rept_deps_build_data)
 
-                build_rept_deps = rept_deps_build_data[i].get(repo_name)
-                if build_rept_deps:
-                    f = open(rept_deps_filename, 'w')
-                    rept_file_contents = build_rept_deps()
-                    f.write(rept_file_contents)
-                    f.close()
-                    files_to_add.append(rept_deps_filename)
-
-                test_utils.exec_proc(['git', 'add'] + files_to_add)
-
-                msg = 'v{0}'.format(i + 1)
-                test_utils.exec_proc(['git', 'commit', '-q', '-m', msg])
                 branch_name = 'branch{0}'.format(i + 1)
                 test_utils.exec_proc(['git', 'branch', '-q', branch_name])
                 branches.append(branch_name)
 
-            test_utils.exec_proc(['git', 'push', '-q', 'origin'] + branches)
+            test_utils.push_branches_to_origin(branches)
 
             os.chdir(test_utils.top_testing_dir)
 

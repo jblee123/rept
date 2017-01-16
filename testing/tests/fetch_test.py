@@ -44,47 +44,24 @@ class FetchTestCase(unittest.TestCase):
         os.chdir(test_utils.top_testing_dir)
         shutil.rmtree('test_repos', ignore_errors=True)
 
-        rept_deps_filename = '.rept_deps'
-
         # Create 4 bare repos to act as remotes.
-        remote_dirs = [os.path.join(test_utils.remotes_home_dir, repo_info[0])
-            for repo_info in repo_info_list]
-        test_utils.make_bare_repos(remote_dirs)
+        repo_names = [repo_info[0] for repo_info in repo_info_list]
+        test_utils.init_remotes(repo_names)
 
         self.commits = {}
 
         # Create 4 local repos and push them up to the remotes.
         for repo_name, local_refs_dir, remote_refs_dir in repo_info_list:
             local_dir = os.path.join(test_utils.locals_home_dir, repo_name)
-            os.makedirs(local_dir)
-            os.chdir(local_dir)
-            prefix = repo_name
-            test_utils.exec_proc(['git', 'init', '-q'])
+            test_utils.init_repo(local_dir)
 
-            remote_name = os.path.join(test_utils.remotes_home_dir, repo_name)
-            test_utils.exec_proc(['git', 'remote', 'add', 'origin', remote_name])
+            test_utils.add_remote(repo_name)
 
             self.commits[repo_name] = []
 
             branches = ['master']
-            for i in range(0, 2):
-                files_to_add = [prefix]
-                f = open(prefix, 'w')
-                f.write('{0} v{1}'.format(prefix, i + 1))
-                f.close()
-
-                build_rept_deps = rept_deps_build_data[i].get(repo_name)
-                if build_rept_deps:
-                    f = open(rept_deps_filename, 'w')
-                    rept_file_contents = build_rept_deps()
-                    f.write(rept_file_contents)
-                    f.close()
-                    files_to_add.append(rept_deps_filename)
-
-                test_utils.exec_proc(['git', 'add'] + files_to_add)
-
-                msg = 'v{0}'.format(i + 1)
-                test_utils.exec_proc(['git', 'commit', '-q', '-m', msg])
+            for i in range(0, len(rept_deps_build_data)):
+                test_utils.commit_common_files(repo_name, i, rept_deps_build_data)
 
                 d = os.getcwd()
                 os.chdir(local_refs_dir)
@@ -93,17 +70,15 @@ class FetchTestCase(unittest.TestCase):
                 ref_file.close()
                 os.chdir(d)
 
-            test_utils.exec_proc(['git', 'push', '-q', 'origin'] + branches)
+            test_utils.push_branches_to_origin(branches)
 
-            os.chdir(local_refs_dir)
-            ref_file = open('master', 'w')
-            ref_file.write(self.commits[repo_name][0])
-            ref_file.close()
-
-            os.chdir(remote_refs_dir)
-            ref_file = open('master', 'w')
-            ref_file.write(self.commits[repo_name][0])
-            ref_file.close()
+            def reset_master_to_first_commit(ref_dir):
+                os.chdir(ref_dir)
+                ref_file = open('master', 'w')
+                ref_file.write(self.commits[repo_name][0])
+                ref_file.close()
+            reset_master_to_first_commit(local_refs_dir)
+            reset_master_to_first_commit(remote_refs_dir)
 
             os.chdir(local_dir)
             out, err, ret = test_utils.exec_proc(

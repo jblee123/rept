@@ -162,40 +162,20 @@ class CheckDepsTestCase(unittest.TestCase):
         os.chdir(test_utils.top_testing_dir)
         shutil.rmtree('test_repos', ignore_errors=True)
 
-        rept_deps_filename = '.rept_deps'
-
         # Create 4 local repos.
         for repo_name, local_refs_dir, remote_refs_dir in repo_info_list:
             local_dir = os.path.join(test_utils.locals_home_dir, repo_name)
-            os.makedirs(local_dir)
-            os.chdir(local_dir)
             repo_name = os.path.basename(local_dir)
-            prefix = repo_name
-            test_utils.exec_proc(['git', 'init', '-q'])
+            test_utils.init_repo(local_dir)
 
-            remote_name = os.path.join(test_utils.remotes_home_dir, repo_name)
-            test_utils.exec_proc(['git', 'remote', 'add', 'origin', remote_name])
+            test_utils.add_remote(repo_name)
+
             os.makedirs(remote_refs_dir)
 
             branches = ['master']
             for i in range(0, len(rept_deps_build_data)):
-                files_to_add = [prefix]
-                f = open(prefix, 'w')
-                f.write('{0} v{1}'.format(prefix, i + 1))
-                f.close()
+                test_utils.commit_common_files(repo_name, i, rept_deps_build_data)
 
-                build_rept_deps = rept_deps_build_data[i].get(repo_name)
-                if build_rept_deps:
-                    f = open(rept_deps_filename, 'w')
-                    rept_file_contents = build_rept_deps()
-                    f.write(rept_file_contents)
-                    f.close()
-                    files_to_add.append(rept_deps_filename)
-
-                test_utils.exec_proc(['git', 'add'] + files_to_add)
-
-                msg = 'v{0}'.format(i + 1)
-                test_utils.exec_proc(['git', 'commit', '-q', '-m', msg])
                 branch_name = 'branch{0}'.format(i + 1)
                 test_utils.exec_proc(['git', 'branch', '-q', branch_name])
                 branches.append(branch_name)
