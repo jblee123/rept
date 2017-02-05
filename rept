@@ -33,7 +33,7 @@ def exec_cmd(argv, dependencies, local_config):
         feature_cmd.cmd_feature(dependencies, local_config, args)
     elif (argv[0] == 'switch' or
           argv[0] == 'sw'):
-        switch_cmd.cmd_switch(dependencies, local_config, args)
+        switch_cmd.cmd_switch(local_config, args)
     else:
         sys.exit('rept: unknown command: {0}'.format(argv[0]))
 
@@ -43,15 +43,26 @@ def main(argv):
 
     rept_utils.move_to_repo_dir_or_die()
 
-    # Get the dependency file. If we're able to open it, keep it open to lock
-    # both it and the directory in which it resides for the duration of
-    # execution.
-    rept_deps_file = rept_utils.open_rept_dep_file()
-    if not rept_deps_file:
-        sys.exit('rept: could not find .rept_deps file')
-        return
+    rept_deps_file = None
+    rept_local_file = None
+    dependencies = None
+    local_config = None
 
-    dependencies = rept_utils.get_dependency_data_or_die(rept_deps_file)
+    is_switch_cmd = (argv[0] == 'switch' or argv[0] == 'sw')
+
+    # If it's the switch command, we may be switching branches in this repo,
+    # and all of our dependency and config info needs to come from the branch
+    # we're going to.
+    if not is_switch_cmd:
+        # Get the dependency file. If we're able to open it, keep it open to
+        # lock both it and the directory in which it resides for the duration of
+        # execution.
+        rept_deps_file = rept_utils.open_rept_dep_file()
+        if not rept_deps_file:
+            sys.exit('rept: could not find .rept_deps file')
+            return
+
+        dependencies = rept_utils.get_dependency_data_or_die(rept_deps_file)
 
     rept_local_file = rept_utils.open_rept_local_file()
     local_config = rept_utils.get_local_config_or_die(
@@ -60,7 +71,7 @@ def main(argv):
     try:
         exec_cmd(argv, dependencies, local_config)
     finally:
-        rept_deps_file.close()
+        if rept_deps_file: rept_deps_file.close()
         if rept_local_file: rept_local_file.close()
 
 if __name__ == "__main__":

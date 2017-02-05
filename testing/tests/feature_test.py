@@ -39,8 +39,7 @@ def make_dep1_branch2_deps():
 
 rept_deps_build_data = [
     # branch1
-    # No deps are set. The app is given a .rept_deps file, but its dependencies
-    # are empty.
+    # app is dependent on b1 of dep1 and dep2, and the latest branch of dep3.
     {
         'test_repo_app': make_app_branch1_deps,
     },
@@ -59,7 +58,6 @@ class FeatureTestCase(unittest.TestCase):
         os.chdir(test_utils.top_testing_dir)
         shutil.rmtree('test_repos', ignore_errors=True)
 
-        base_remote_dir = os.path.join(test_utils.test_repos_home_dir, 'remotes')
         base_local_dir = os.path.join(test_utils.test_repos_home_dir, 'locals')
         repo_names = [
             'test_repo_app',

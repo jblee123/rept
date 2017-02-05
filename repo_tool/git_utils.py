@@ -60,12 +60,13 @@ def get_remotes():
 
     return [remote.strip() for remote in out.split(os.linesep)]
 
-def is_clean_working_directory():
-    ret, out, err = rept_utils.exec_proc(['git', 'status', '--porcelain'])
-    if ret:
-        return False
+def is_clean_working_directory(count_untracked):
+    cmd = ['git', 'status', '--porcelain']
+    if not count_untracked:
+        cmd.append('-uno')
+    ret, out, err = rept_utils.exec_proc(cmd)
 
-    return out == ''
+    return (ret == 0) and (out == '')
 
 def get_file_contents_for_revision(rev, filename):
     spec = '{0}:{1}'.format(rev, filename)
