@@ -11,6 +11,7 @@ from repo_tool import fetch_cmd
 from repo_tool import prune_cmd
 from repo_tool import switch_cmd
 from repo_tool import sync_cmd
+from repo_tool import up_deps_cmd
 
 ################################################################################
 # main funcs
@@ -34,6 +35,9 @@ def exec_cmd(argv, dependencies, local_config):
     elif (argv[0] == 'switch' or
           argv[0] == 'sw'):
         switch_cmd.cmd_switch(local_config, args)
+    elif (argv[0] == 'up-deps' or
+          argv[0] == 'ud'):
+        up_deps_cmd.cmd_up_deps(dependencies, local_config, args)
     else:
         sys.exit('rept: unknown command: {0}'.format(argv[0]))
 
