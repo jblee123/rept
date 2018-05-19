@@ -1,0 +1,10 @@
+# Set the default behavior, in case people don't have core.autocrlf set.
+* text=auto
+
+*.py text
+
+# rept is run as a script in *nix environments, so gotta have LF endings.
+rept text eol=lf
+
+# rept.bat is a windows batch file, so windows line endings
+rept.bat text eol=crlf
