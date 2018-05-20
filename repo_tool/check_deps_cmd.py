@@ -7,18 +7,28 @@
 # dependencies may each depend on different versions of a third dependency.
 ################################################################################
 
+import collections
 import os
 import sys
 
 from repo_tool import git_utils
 from repo_tool import rept_utils
 
+TargetDep = collections.namedtuple('TargetDep',
+    'dependency repo_abs_path')
+
+def find_target_dep(targets, dep):
+    for target in targets:
+        if (target.dependency.remote_server == dep.remote_server and
+            target.dependency.name == dep.name):
+            return target
+    return None
+
 # Check each dependency for inconsistencies against the target dependencies.
 def check_subdeps(dep_chain, dependencies, targets):
     errs = []
     for dep in dependencies:
-        dep_abs_path = os.path.abspath(dep.path)
-        target_dep = targets.get(dep_abs_path)
+        target_dep = find_target_dep(targets, dep)
 
         # Because dependencies are flat, the main repo's .rept_deps file must
         # list *all* needed repos all the way down through the dependency tree.
@@ -31,16 +41,16 @@ def check_subdeps(dep_chain, dependencies, targets):
         # We're requiring that revision names, not just commits have to match.
         # Technically commits are all that are required for consistency, but
         # that's just asking for trouble if we start mixing representations.
-        elif dep.revision != target_dep.revision:
+        elif dep.revision != target_dep.dependency.revision:
             errs.append(
                 (['Inconsistent dependency for {0}:'.format(dep.name),
-                  'required: {0}'.format(target_dep.revision),
+                  'required: {0}'.format(target_dep.dependency.revision),
                   'found: {0}'.format(dep.revision)],
                  dep_chain))
 
         else:
             dep_hash, hash_err = git_utils.get_rev_hash_from_repo(
-                dep.revision, dep_abs_path)
+                dep.revision, target_dep.repo_abs_path)
             if not dep_hash:
                 err_msg = rept_utils.gen_bad_revision_err_str(
                     dep.name, dep.revision, hash_err)
@@ -50,30 +60,26 @@ def check_subdeps(dep_chain, dependencies, targets):
                 # If we got here, this dependency's revision is ok. Now gotta
                 # check its sub-deps.
                 subdep_errs = check_subdeps_for_repo(
-                    dep_chain, dep.name, dep_abs_path, targets)
+                    dep_chain, dep.name, target_dep, targets)
                 errs.extend(subdep_errs)
 
     return errs
 
 # Check the subdependencies for the specified repo against the targets.
-def check_subdeps_for_repo(dep_chain, repo_name, repo_abs_path, targets):
-    new_dep_chain = dep_chain + [repo_abs_path]
+def check_subdeps_for_repo(dep_chain, repo_name, target_dep, targets):
+    new_dep_chain = dep_chain + [target_dep.repo_abs_path]
 
     # If the current repo path is already in the dependency chain, that means
     # we must have a circular dependency, which is bad.
-    if repo_abs_path in dep_chain:
+    if target_dep.repo_abs_path in dep_chain:
         return [('Circular reference detected', new_dep_chain)]
 
-    with rept_utils.DoInExistingDir(repo_abs_path) as ctx:
+    with rept_utils.DoInExistingDir(target_dep.repo_abs_path) as ctx:
         if ctx:
-            # This is guaranteed to succeed because we verified it in
-            # check_subdeps().
-            target_dep = targets.get(repo_abs_path)
-
             # Look for the contents of a .rept_deps file at the specified
             # revision so see if we need to keep doing consistency checks.
             rept_deps_contents = git_utils.get_file_contents_for_revision(
-                target_dep.revision, '.rept_deps')
+                target_dep.dependency.revision, '.rept_deps')
 
             # No .rept_deps file? No prob. Just means no conflicts.
             # Treat an empty file and no file as the same thing.
@@ -95,10 +101,11 @@ def check_subdeps_for_repo(dep_chain, repo_name, repo_abs_path, targets):
             return [('Missing repo: {0}'.format(repo_name), new_dep_chain)]
 
 def do_check_dep_consistency(dependencies):
-    target_deps = {}
+    target_deps = []
     for dep in dependencies:
-        repo_path = os.path.abspath(dep.path)
-        target_deps[repo_path] = dep
+        repo_abs_path = os.path.abspath(dep.path)
+        target_dep = TargetDep(dep, repo_abs_path)
+        target_deps.append(target_dep)
 
     # Check each dependency for consistency with the targets.
     errs = check_subdeps([os.getcwd()], dependencies, target_deps)
