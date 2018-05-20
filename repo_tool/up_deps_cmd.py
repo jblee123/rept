@@ -29,15 +29,27 @@
 ################################################################################
 
 import collections
-import enum
+#import enum # bring this back when we can assume python 3. screw python 2. :(
 import os
 import sys
 
 from repo_tool import git_utils
 from repo_tool import rept_utils
 
-RootCommitType = enum.Enum('RootCommitType', 'NEW AMEND')
-RepoAction = enum.Enum('RepoAction', 'ERR NONE UPDATE_NEW UPDATE_AMEND')
+# START PYTHON2 HACK ###########################################################
+# bring this back when we can assume python 3. screw python 2. :(
+# RootCommitType = enum.Enum('RootCommitType', 'NEW AMEND')
+# RepoAction = enum.Enum('RepoAction', 'ERR NONE UPDATE_NEW UPDATE_AMEND')
+class RootCommitType:
+    NEW = 1
+    AMEND = 2
+
+class RepoAction:
+    ERR = 1
+    NONE = 2
+    UPDATE_NEW = 2
+    UPDATE_AMEND = 3
+# END PYTHON2 HACK #############################################################
 
 UpdateResult = collections.namedtuple('UpdateResult',
     'repo_path action new_rev msg')

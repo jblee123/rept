@@ -7,6 +7,7 @@
 # repos are checked out.
 ################################################################################
 
+import errno # python 2 hack
 import os
 import sys
 
@@ -31,12 +32,19 @@ def cmd_sync(dependencies, args):
         repo_path = os.path.abspath(dep.path)
 
         # If the dir doesn't exist, it needs to. If it does, this is a no-op.
-        os.makedirs(repo_path, exist_ok=True)
+        # start python 2 hack
+        #os.makedirs(repo_path, exist_ok=True)
+        try:
+            os.makedirs(repo_path)
+        except OSError as e:
+            if e.errno != errno.EEXIST:
+                raise  # raises the error again
+        # end python 2 hack
 
         with rept_utils.DoInExistingDir(repo_path) as ctx:
             if ctx:
                 # Empty dir? If so, do a clone.
-                if not os.listdir():
+                if not os.listdir('.'): # python 2 requires param
                     print('cloning repo {0}...'.format(dep.name))
                     full_remote_repo_name = dep.remote_server + dep.name
                     ret = rept_utils.exec_proc(

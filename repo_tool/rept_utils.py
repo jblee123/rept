@@ -1,3 +1,5 @@
+from __future__ import print_function # python 2 hack
+
 import ast
 import collections
 import getopt
@@ -76,8 +78,12 @@ def exec_proc(cmd, redirect=True):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE)
         out, err = p.communicate()
-        out = str(out,'utf-8').strip()
-        err = str(err,'utf-8').strip()
+        # START PYTHON 2 HACK
+        out = out.decode('utf-8').strip()
+        err = err.decode('utf-8').strip()
+        # out = str(out,'utf-8').strip()
+        # err = str(err,'utf-8').strip()
+        # END PYTHON 2 HACK
         return p.returncode, out, err
     else:
         return subprocess.call(cmd)
