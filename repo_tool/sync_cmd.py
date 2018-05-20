@@ -30,7 +30,7 @@ def cmd_sync(dependencies, args):
     for dep in dependencies:
         repo_path = os.path.abspath(dep.path)
 
-        # If the dir doesn't exist, it needs to. If it does, this is a noop.
+        # If the dir doesn't exist, it needs to. If it does, this is a no-op.
         os.makedirs(repo_path, exist_ok=True)
 
         with rept_utils.DoInExistingDir(repo_path) as ctx:
@@ -45,7 +45,7 @@ def cmd_sync(dependencies, args):
                     if (ret):
                         errs.append(
                             'cannot sync "{0}": '
-                            'fetch failed'.format(dep.path))
+                            'fetch clone'.format(dep.path))
                 # Already a .git dir? If so, do a fetch.
                 elif (os.path.isdir('.git')):
                     print('fetching repo {0}...'.format(dep.name))
